@@ -1,0 +1,14 @@
+projectName: retail
+environment: dev
+imageRegistry: 000000000000.dkr.ecr.us-east-1.amazonaws.com
+imageTag: latest
+
+services:
+  - name: product
+    port: 8081
+  - name: inventory
+    port: 8082
+  - name: order
+    port: 8083
+  - name: notification
+    port: 8084
