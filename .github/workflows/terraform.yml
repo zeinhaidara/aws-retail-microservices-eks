@@ -1,4 +1,4 @@
-name: Terraform
+name: Terraform Infrastructure
 
 on:
   workflow_dispatch:
@@ -7,89 +7,74 @@ on:
         description: Target environment
         required: true
         type: choice
-        default: dev
         options: [dev, test, prod]
-  pull_request:
-    branches: [infra]
-    paths: ["terraform/**", ".github/workflows/terraform.yml"]
-  push:
-    branches: [infra]
-    paths: ["terraform/**", ".github/workflows/terraform.yml"]
+        default: dev
+      action:
+        description: Terraform action
+        required: true
+        type: choice
+        options: [plan, apply, destroy]
+        default: plan
 
 permissions:
   id-token: write
   contents: read
-  pull-requests: read
+
+env:
+  TF_DIR: terraform/environments/${{ inputs.environment }}
+  TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+  TF_VAR_owner: ${{ vars.OWNER }}
+  TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
+  TF_VAR_environment: ${{ vars.ENVIRONMENT }}
+  TF_VAR_vpc_cidr: ${{ vars.VPC_CIDR }}
+  TF_VAR_cluster_version: ${{ vars.CLUSTER_VERSION }}
+  TF_VAR_enable_nat_gateway: ${{ vars.ENABLE_NAT_GATEWAY }}
 
 jobs:
-  plan:
+  terraform:
+    name: ${{ inputs.action }} ${{ inputs.environment }} infrastructure
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment || 'dev' }}
-    env:
-      TF_DIR: terraform/environments/${{ inputs.environment || 'dev' }}
-      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-      TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
-      TF_VAR_environment: ${{ vars.ENVIRONMENT }}
-      TF_VAR_vpc_cidr: ${{ vars.VPC_CIDR }}
-      TF_VAR_cluster_version: ${{ vars.CLUSTER_VERSION }}
-      TF_VAR_enable_nat_gateway: ${{ vars.ENABLE_NAT_GATEWAY }}
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: terraform-${{ inputs.environment }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+
       - uses: hashicorp/setup-terraform@v3
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
       - name: Terraform init
         working-directory: ${{ env.TF_DIR }}
         run: terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
       - name: Terraform format check
         run: terraform fmt -check -recursive terraform
+
       - name: Terraform validate
         working-directory: ${{ env.TF_DIR }}
         run: terraform validate
+
       - name: Terraform plan
+        if: inputs.action == 'plan' || inputs.action == 'apply'
         working-directory: ${{ env.TF_DIR }}
         run: terraform plan -input=false -lock-timeout=5m -out=tfplan
-      - name: Upload plan
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-plan-${{ github.sha }}-${{ inputs.environment || 'dev' }}
-          path: ${{ env.TF_DIR }}/tfplan
-          retention-days: 1
 
-  apply:
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/infra') || github.event_name == 'workflow_dispatch'
-    needs: plan
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.environment || 'dev' }}
-    concurrency:
-      group: terraform-apply-${{ inputs.environment || 'dev' }}
-      cancel-in-progress: false
-    env:
-      TF_DIR: terraform/environments/${{ inputs.environment || 'dev' }}
-      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-      TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
-      TF_VAR_environment: ${{ vars.ENVIRONMENT }}
-      TF_VAR_vpc_cidr: ${{ vars.VPC_CIDR }}
-      TF_VAR_cluster_version: ${{ vars.CLUSTER_VERSION }}
-      TF_VAR_enable_nat_gateway: ${{ vars.ENABLE_NAT_GATEWAY }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - name: Terraform init
+      - name: Terraform destroy plan
+        if: inputs.action == 'destroy'
         working-directory: ${{ env.TF_DIR }}
-        run: terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
-      - name: Download reviewed plan
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-plan-${{ github.sha }}-${{ inputs.environment || 'dev' }}
-          path: ${{ env.TF_DIR }}
-      - name: Apply reviewed plan
+        run: terraform plan -destroy -input=false -lock-timeout=5m -out=tfplan
+
+      - name: Terraform apply
+        if: inputs.action == 'apply'
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
+
+      - name: Terraform destroy
+        if: inputs.action == 'destroy'
         working-directory: ${{ env.TF_DIR }}
         run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
