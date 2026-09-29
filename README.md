@@ -2,7 +2,7 @@
 
 Terraform Infrastructure-as-Code for the retail microservices platform.
 
-This `infra` branch contains infrastructure only. Application source code, Dockerfiles, Docker Compose, Helm charts, and application tests belong on the `main` branch.
+This `main` branch contains infrastructure only. Application source code, Dockerfiles, Docker Compose, Helm charts, and application tests belong on the `app` branch.
 
 ## Layout
 
