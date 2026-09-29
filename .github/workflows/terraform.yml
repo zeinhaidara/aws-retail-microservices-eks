@@ -28,6 +28,7 @@ jobs:
     env:
       TF_DIR: terraform/environments/${{ inputs.environment || 'dev' }}
       TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_owner: ${{ vars.OWNER }}
       TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
       TF_VAR_environment: ${{ vars.ENVIRONMENT }}
       TF_VAR_vpc_cidr: ${{ vars.VPC_CIDR }}
@@ -70,6 +71,7 @@ jobs:
     env:
       TF_DIR: terraform/environments/${{ inputs.environment || 'dev' }}
       TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_owner: ${{ vars.OWNER }}
       TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
       TF_VAR_environment: ${{ vars.ENVIRONMENT }}
       TF_VAR_vpc_cidr: ${{ vars.VPC_CIDR }}

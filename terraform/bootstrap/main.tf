@@ -9,15 +9,31 @@ terraform {
 }
 
 variable "aws_region" { type = string }
+variable "owner" {
+  type    = string
+  default = "zein"
+}
+variable "project_name" {
+  type    = string
+  default = "cloudbatch818"
+}
 
 provider "aws" {
   region = var.aws_region
+  default_tags {
+    tags = {
+      Owner     = var.owner
+      Project   = var.project_name
+      ManagedBy = "terraform"
+    }
+  }
 }
 
 data "aws_caller_identity" "current" {}
 
 locals {
-  state_bucket_name = "retail-terraform-state-${data.aws_caller_identity.current.account_id}"
+  name_prefix       = "${var.project_name}-${var.owner}"
+  state_bucket_name = "${local.name_prefix}-terraform-state-${data.aws_caller_identity.current.account_id}"
 }
 
 resource "aws_s3_bucket" "terraform_state" {

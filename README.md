@@ -31,6 +31,7 @@ Repository variables:
 ```text
 AWS_REGION
 AWS_ROLE_ARN
+OWNER
 PROJECT_NAME
 TF_STATE_BUCKET
 ```
@@ -42,6 +43,15 @@ ENVIRONMENT=dev
 VPC_CIDR=10.40.0.0/16
 CLUSTER_VERSION=1.33
 ENABLE_NAT_GATEWAY=true
+```
+
+Terraform applies `Owner=zein` and `Project=cloudbatch818` to supported AWS resources. Resource names use the `cloudbatch818-zein` prefix followed by the environment where applicable.
+
+Set these repository variable values before running the workflows:
+
+```text
+OWNER=zein
+PROJECT_NAME=cloudbatch818
 ```
 
 Create the same environment variable names for `test` and `prod` later, using different values such as non-overlapping VPC CIDRs.
@@ -57,7 +67,7 @@ No AWS access keys, database passwords, `.tfvars` files, or Terraform state file
 
 ## Terraform workflow
 
-Pull requests to `infra` run:
+Pull requests to `main` run:
 
 ```text
 terraform init
@@ -66,7 +76,7 @@ terraform validate
 terraform plan
 ```
 
-Pushes to `infra` and manual workflow runs upload the plan as an artifact. The selected GitHub Environment controls approval before the exact saved plan is applied.
+Pushes to `main` and manual workflow runs upload the plan as an artifact. The selected GitHub Environment controls approval before the exact saved plan is applied.
 
 The state keys are isolated by environment:
 
