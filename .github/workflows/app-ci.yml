@@ -1,0 +1,86 @@
+name: Application CI
+
+on:
+  pull_request:
+    branches: [app]
+    paths:
+      - "services/**"
+      - "tests/**"
+      - "docker-compose.yml"
+      - ".github/workflows/app-ci.yml"
+  push:
+    branches: [app]
+    paths:
+      - "services/**"
+      - "tests/**"
+      - "docker-compose.yml"
+      - ".github/workflows/app-ci.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate:
+    name: Validate Compose configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+
+  test:
+    name: Run integration smoke test
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up --build --detach
+      - run: pwsh -File tests/smoke.ps1
+      - if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  security:
+    name: Scan ${{ matrix.service }} image
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [product, inventory, order, notification]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/retail-service
+          load: true
+          push: false
+          tags: local/${{ matrix.service }}:${{ github.sha }}
+      - uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: local/${{ matrix.service }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+  publish:
+    name: Publish ${{ matrix.service }} image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/app'
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    environment: dev
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [product, inventory, order, notification]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/retail-service
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ vars.PROJECT_NAME }}-${{ vars.ENVIRONMENT }}/${{ matrix.service }}-service:${{ github.sha }}
