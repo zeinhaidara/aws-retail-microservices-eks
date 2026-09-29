@@ -22,3 +22,29 @@ Service endpoints:
 | Notification | 8084 |
 
 Terraform is intentionally maintained on the separate `infra` branch.
+
+## Application pipelines
+
+`Application CI` runs on pull requests and pushes to `app`:
+
+- Docker Compose validation
+- Helm chart linting
+- Local smoke tests
+- Trivy HIGH/CRITICAL image scanning
+
+`Application CD` runs after a successful CI run on `app`, or manually with `workflow_dispatch`:
+
+- Publishes immutable commit-SHA images to ECR
+- Waits for approval from the selected GitHub Environment
+- Deploys the Helm release to the matching EKS cluster
+
+The CD workflow expects these repository variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `AWS_ROLE_ARN` | GitHub OIDC deployment role |
+| `AWS_REGION` | AWS region |
+| `AWS_ACCOUNT_ID` | ECR registry account |
+| `PROJECT_NAME` | Resource prefix, currently `retail` |
+
+Create `dev`, `test`, and `prod` GitHub Environments as needed. Configure required reviewers on each environment to gate the EKS deployment. The environment name must match the Terraform naming convention: `<PROJECT_NAME>-<environment>`.
