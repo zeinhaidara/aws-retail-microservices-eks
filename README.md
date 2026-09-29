@@ -67,16 +67,15 @@ No AWS access keys, database passwords, `.tfvars` files, or Terraform state file
 
 ## Terraform workflow
 
-Pull requests to `main` run:
+The workflow is manual only. Select an environment and action from the GitHub Actions UI:
 
 ```text
-terraform init
-terraform fmt -check
-terraform validate
-terraform plan
+plan    -> create and display a Terraform plan
+apply   -> create a plan, then apply that exact saved plan
+destroy -> create a destroy plan, then apply that exact saved plan
 ```
 
-Pushes to `main` and manual workflow runs upload the plan as an artifact. The selected GitHub Environment controls approval before the exact saved plan is applied.
+There are no automatic Terraform runs on pull requests or pushes. The selected GitHub Environment controls approval before the manually selected action runs.
 
 The state keys are isolated by environment:
 
