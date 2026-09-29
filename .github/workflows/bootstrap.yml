@@ -1,0 +1,51 @@
+name: Bootstrap Terraform State
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    environment: bootstrap
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: terraform/bootstrap
+        run: terraform init -input=false
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive terraform/bootstrap
+
+      - name: Terraform validate
+        working-directory: terraform/bootstrap
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: terraform/bootstrap
+        env:
+          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Terraform apply
+        working-directory: terraform/bootstrap
+        env:
+          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Show state bucket name
+        working-directory: terraform/bootstrap
+        run: terraform output state_bucket_name
