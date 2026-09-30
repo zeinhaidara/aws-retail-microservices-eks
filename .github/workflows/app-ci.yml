@@ -10,6 +10,9 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  security-events: write
+  pull-requests: read
 
 jobs:
   validate:
@@ -52,3 +55,37 @@ jobs:
           image-ref: local/${{ matrix.service }}:${{ github.sha }}
           severity: HIGH,CRITICAL
           exit-code: "1"
+
+  codeql:
+    name: CodeQL analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - uses: github/codeql-action/analyze@v3
+
+  filesystem-security:
+    name: Scan source and configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

@@ -25,7 +25,11 @@ env:
 jobs:
   publish:
     name: Publish ${{ matrix.service }} image
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'app' &&
+      github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
