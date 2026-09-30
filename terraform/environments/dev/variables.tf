@@ -9,7 +9,12 @@ variable "environment" {
 
 variable "project_name" {
   type    = string
-  default = "retail"
+  default = "cloudbatch818"
+}
+
+variable "owner" {
+  type    = string
+  default = "zein"
 }
 
 variable "vpc_cidr" {

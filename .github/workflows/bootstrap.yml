@@ -10,7 +10,6 @@ permissions:
 jobs:
   bootstrap:
     runs-on: ubuntu-latest
-    environment: bootstrap
 
     steps:
       - uses: actions/checkout@v4
@@ -38,12 +37,16 @@ jobs:
         working-directory: terraform/bootstrap
         env:
           TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+          TF_VAR_owner: ${{ vars.OWNER }}
+          TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
         run: terraform plan -input=false -out=tfplan
 
       - name: Terraform apply
         working-directory: terraform/bootstrap
         env:
           TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+          TF_VAR_owner: ${{ vars.OWNER }}
+          TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
         run: terraform apply -input=false -auto-approve tfplan
 
       - name: Show state bucket name
