@@ -17,6 +17,10 @@ terraform/
 └── terraform.yml              # Format, validate, plan, apply
 ```
 
+## Architecture
+
+The system architecture diagram, traffic flow, security boundaries, and editable Eraser link are documented in [`docs/architecture/README.md`](docs/architecture/README.md).
+
 Future environments use the same structure:
 
 ```text
