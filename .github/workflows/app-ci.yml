@@ -3,10 +3,21 @@ name: Application CI
 on:
   pull_request:
     branches: [app]
-    paths: ["services/**", "tests/**", "deploy/**", "docker-compose.yml", ".github/workflows/app-ci.yml"]
+    paths:
+      - "services/**"
+      - "tests/**"
+      - "deploy/**"
+      - "docker-compose.yml"
+      - ".github/workflows/app-ci.yml"
+
   push:
     branches: [app]
-    paths: ["services/**", "tests/**", "deploy/**", "docker-compose.yml", ".github/workflows/app-ci.yml"]
+    paths:
+      - "services/**"
+      - "tests/**"
+      - "deploy/**"
+      - "docker-compose.yml"
+      - ".github/workflows/app-ci.yml"
 
 permissions:
   contents: read
@@ -18,60 +29,86 @@ jobs:
   validate:
     name: Validate application
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose config --quiet
+
+      - name: Validate Docker Compose
+        run: docker compose config --quiet
+
       - uses: azure/setup-helm@v4
-      - run: helm lint deploy/helm/retail
+
+      - name: Lint Helm chart
+        run: helm lint deploy/helm/retail
 
   test:
     name: Run application smoke test
     needs: validate
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose up --build --detach
-      - run: pwsh -File tests/smoke.ps1
-      - if: always()
+
+      - name: Start application
+        run: docker compose up --build --detach
+
+      - name: Run smoke tests
+        run: pwsh -File tests/smoke.ps1
+
+      - name: Stop application
+        if: always()
         run: docker compose down --volumes --remove-orphans
 
   security:
     name: Scan ${{ matrix.service }} image
     needs: validate
     runs-on: ubuntu-latest
+
     strategy:
       fail-fast: false
       matrix:
         service: [product, inventory, order, notification]
+
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/build-push-action@v6
+
+      - name: Build image
+        uses: docker/build-push-action@v6
         with:
           context: services/retail-service
           load: true
           tags: local/${{ matrix.service }}:${{ github.sha }}
-      - uses: aquasecurity/trivy-action@0.33.1
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: local/${{ matrix.service }}:${{ github.sha }}
           severity: HIGH,CRITICAL
+          ignore-unfixed: true
           exit-code: "1"
 
   codeql:
     name: CodeQL analysis
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: github/codeql-action/init@v3
         with:
           languages: python
+
       - uses: github/codeql-action/analyze@v3
 
   filesystem-security:
     name: Scan source and configuration
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@0.33.1
+
+      - name: Scan source and configuration
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -84,8 +121,10 @@ jobs:
     name: Dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high

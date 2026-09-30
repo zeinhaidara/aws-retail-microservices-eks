@@ -17,10 +17,22 @@ spec:
         app.kubernetes.io/name: {{ .name }}
         app.kubernetes.io/part-of: retail
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: {{ .name }}
           image: {{ $.Values.imageRegistry }}/{{ $.Values.projectName }}-{{ $.Values.environment }}/{{ .name }}-service:{{ $.Values.imageTag }}
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: SERVICE_NAME
               value: {{ .name }}-service
