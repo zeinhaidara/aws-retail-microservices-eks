@@ -7,43 +7,53 @@ on:
         description: Target environment
         required: true
         type: choice
-        options: [dev, test, prod]
+        options:
+          - dev
+          - test
+          - prod
         default: dev
+
       action:
         description: Terraform action
         required: true
         type: choice
-        options: [plan, apply, destroy]
+        options:
+          - plan
+          - apply
+          - destroy
         default: plan
 
 permissions:
   id-token: write
   contents: read
 
-env:
-  TF_DIR: terraform/environments/${{ inputs.environment }}
-  TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-  TF_VAR_owner: ${{ vars.OWNER }}
-  TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
-  TF_VAR_environment: ${{ vars.ENVIRONMENT }}
-  TF_VAR_vpc_cidr: ${{ vars.VPC_CIDR }}
-  TF_VAR_cluster_version: ${{ vars.CLUSTER_VERSION }}
-  TF_VAR_enable_nat_gateway: ${{ vars.ENABLE_NAT_GATEWAY }}
-
 jobs:
   terraform:
     name: ${{ inputs.action }} ${{ inputs.environment }} infrastructure
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+
     concurrency:
       group: terraform-${{ inputs.environment }}
       cancel-in-progress: false
+
+    env:
+      TF_DIR: terraform/environments/${{ inputs.environment }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_owner: ${{ vars.OWNER }}
+      TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
+      TF_VAR_environment: ${{ vars.ENVIRONMENT }}
+      TF_VAR_vpc_cidr: ${{ vars.VPC_CIDR }}
+      TF_VAR_cluster_version: ${{ vars.CLUSTER_VERSION }}
+      TF_VAR_enable_nat_gateway: ${{ vars.ENABLE_NAT_GATEWAY }}
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: hashicorp/setup-terraform@v3
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
