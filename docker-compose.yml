@@ -23,6 +23,8 @@ services:
     image: retail/order-service:dev
     environment:
       SERVICE_NAME: order-service
+      PRODUCT_SERVICE_URL: http://product-service:8080
+      INVENTORY_SERVICE_URL: http://inventory-service:8080
     ports:
       - "8083:8080"
 
