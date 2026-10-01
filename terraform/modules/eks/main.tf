@@ -4,6 +4,11 @@ variable "vpc_id" { type = string }
 variable "subnet_ids" { type = list(string) }
 variable "tags" { type = map(string) }
 
+# Temporary dev-demo exceptions: GitHub-hosted deployments require the public API,
+# and workloads call external registries and AI APIs. Revisit before wider use.
+#trivy:ignore:AVD-AWS-0040:exp:2026-11-01
+#trivy:ignore:AVD-AWS-0041:exp:2026-11-01
+#trivy:ignore:AVD-AWS-0104:exp:2026-11-01
 module "eks" {
   source                                   = "terraform-aws-modules/eks/aws"
   version                                  = "~> 21.0"
