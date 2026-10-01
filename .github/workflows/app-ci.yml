@@ -1,29 +1,14 @@
-name: Application CI
+name: Application CI/CD
 
 on:
   pull_request:
     branches: [app]
-    paths:
-      - "services/**"
-      - "tests/**"
-      - "deploy/**"
-      - "docker-compose.yml"
-      - ".github/workflows/app-ci.yml"
 
   push:
     branches: [app]
-    paths:
-      - "services/**"
-      - "tests/**"
-      - "deploy/**"
-      - "docker-compose.yml"
-      - ".github/workflows/app-ci.yml"
 
 permissions:
   contents: read
-  actions: read
-  security-events: write
-  pull-requests: read
 
 jobs:
   validate:
@@ -90,6 +75,10 @@ jobs:
   codeql:
     name: CodeQL analysis
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
 
     steps:
       - uses: actions/checkout@v4
@@ -121,6 +110,9 @@ jobs:
     name: Dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
 
     steps:
       - uses: actions/checkout@v4
@@ -128,3 +120,86 @@ jobs:
       - uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
+
+  publish:
+    name: Publish ${{ matrix.service }} image
+    needs: [validate, test, security, codeql, filesystem-security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/app'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [product, inventory, order, notification]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - id: image-check
+        name: Reuse image if this commit is already published
+        env:
+          REPOSITORY: ${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev/${{ matrix.service }}-service
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          if aws ecr describe-images --repository-name "$REPOSITORY" --image-ids "imageTag=$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and publish image
+        if: steps.image-check.outputs.exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: services/retail-service
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev/${{ matrix.service }}-service:${{ github.sha }}
+
+  deploy:
+    name: Deploy approved dev release
+    needs: publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/app'
+    runs-on: ubuntu-latest
+    environment: dev
+    concurrency:
+      group: app-deploy-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: azure/setup-helm@v4
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name "${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev" --region "${{ vars.AWS_REGION }}"
+
+      - name: Deploy Helm release
+        run: |
+          helm upgrade --install retail deploy/helm/retail \
+            --namespace retail-dev \
+            --create-namespace \
+            --set projectName=${{ vars.PROJECT_NAME }}-${{ vars.OWNER }} \
+            --set environment=dev \
+            --set imageRegistry=${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com \
+            --set imageTag=${{ github.sha }} \
+            --wait --timeout 10m --atomic

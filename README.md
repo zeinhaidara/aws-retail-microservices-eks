@@ -25,7 +25,7 @@ Terraform is maintained on the separate `main` branch.
 
 ## Application pipelines
 
-`Application CI` runs on pull requests and pushes to `app`:
+`Application CI/CD` runs on pull requests and pushes to `app`:
 
 - Docker Compose validation
 - Helm chart linting
@@ -35,13 +35,15 @@ Terraform is maintained on the separate `main` branch.
 - Trivy source/configuration scanning
 - Trivy HIGH/CRITICAL image scanning
 
-`Application CD` runs after a successful CI run on `app`, or manually with `workflow_dispatch`:
+On a merge to `app`, the same workflow continues into release jobs only after all required
+CI jobs pass. Keeping CI and CD together also avoids the default-branch requirement GitHub
+places on `workflow_dispatch` and `workflow_run` workflows:
 
 - Publishes immutable commit-SHA images to ECR
-- Waits for approval from the selected GitHub Environment
-- Deploys the Helm release to the matching EKS cluster
+- Pauses at the protected `dev` GitHub Environment for deployment approval
+- Deploys the same commit to the dev EKS cluster after approval
 
-The CD workflow expects these repository variables:
+The application workflow expects these repository variables:
 
 | Variable | Purpose |
 | --- | --- |
@@ -49,5 +51,9 @@ The CD workflow expects these repository variables:
 | `AWS_REGION` | AWS region |
 | `AWS_ACCOUNT_ID` | ECR registry account |
 | `PROJECT_NAME` | Resource prefix, currently `cloudbatch818` |
+| `OWNER` | Resource owner prefix, currently `zein` |
 
-Create `dev`, `test`, and `prod` GitHub Environments as needed. Configure required reviewers on each environment to gate the EKS deployment. The environment name must match the Terraform naming convention: `<PROJECT_NAME>-<environment>`.
+Create the `dev` GitHub Environment and configure required reviewers. Pull requests run
+verification only; they do not publish images or deploy. The merge push runs the checks,
+publishes images on success, then waits for environment approval before deploying. Resource
+names follow `<PROJECT_NAME>-<OWNER>-<environment>`.
