@@ -57,8 +57,8 @@ $tripPlan = Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8085/api/trip-plan" `
   -ContentType "application/json" `
-  -Body '{"interest":"lunar views","priority":"shortest","traveler":"curious explorer"}'
+  -Body '{"planet":"earth","interest":"Earth-orbit views","priority":"shortest","traveler":"curious explorer"}'
 
-if ($tripPlan.recommendedProductIds -notcontains "orbit-006") { throw "trip planner did not recommend the shortest catalog journey" }
+if ($tripPlan.recommendedProductIds -notcontains "orbit-006") { throw "trip planner did not recommend the selected Earth-orbit package" }
 if ($tripPlan.mode -ne "demo" -and $tripPlan.mode -ne "ai") { throw "trip planner mode missing" }
 Write-Output "trip planner: ok ($($tripPlan.mode))"
