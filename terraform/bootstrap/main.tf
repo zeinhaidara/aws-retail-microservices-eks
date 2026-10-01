@@ -12,10 +12,18 @@ variable "aws_region" { type = string }
 variable "owner" {
   type    = string
   default = "zein"
+  validation {
+    condition     = var.owner == "zein"
+    error_message = "Resource names must use the zein owner prefix."
+  }
 }
 variable "project_name" {
   type    = string
   default = "cloudbatch818"
+  validation {
+    condition     = var.project_name == "cloudbatch818"
+    error_message = "Project resource names must use the cloudbatch818 prefix."
+  }
 }
 
 provider "aws" {
@@ -23,7 +31,7 @@ provider "aws" {
   default_tags {
     tags = {
       Owner     = var.owner
-      Project   = var.project_name
+      Project   = "Cloudbatch818"
       ManagedBy = "terraform"
     }
   }
@@ -38,6 +46,11 @@ locals {
 
 resource "aws_s3_bucket" "terraform_state" {
   bucket = local.state_bucket_name
+  tags = {
+    Owner     = var.owner
+    Project   = "Cloudbatch818"
+    ManagedBy = "terraform"
+  }
 }
 
 resource "aws_s3_bucket_versioning" "terraform_state" {

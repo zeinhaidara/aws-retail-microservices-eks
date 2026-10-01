@@ -6,3 +6,5 @@
 !*.tfvars.example
 backend.hcl
 crash.log
+.env
+.worktrees/

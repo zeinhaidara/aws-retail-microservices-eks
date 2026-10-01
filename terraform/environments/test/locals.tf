@@ -2,7 +2,7 @@ locals {
   name = "${var.project_name}-${var.owner}-${var.environment}"
   common_tags = {
     Owner       = var.owner
-    Project     = var.project_name
+    Project     = "Cloudbatch818"
     Environment = var.environment
     ManagedBy   = "terraform"
   }
