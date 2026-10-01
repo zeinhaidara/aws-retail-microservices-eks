@@ -1,0 +1,198 @@
+name: Terraform Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [dev]
+        default: dev
+      action:
+        description: Terraform action
+        required: true
+        type: choice
+        options: [plan, apply, destroy]
+        default: plan
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-dev
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan ${{ inputs.action }} (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    env:
+      TF_DIR: terraform/environments/${{ inputs.environment }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_owner: ${{ vars.OWNER }}
+      TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
+      TF_VAR_environment: ${{ vars.ENVIRONMENT }}
+      TF_VAR_vpc_cidr: ${{ vars.VPC_CIDR }}
+      TF_VAR_cluster_version: ${{ vars.CLUSTER_VERSION }}
+      TF_VAR_enable_nat_gateway: ${{ vars.ENABLE_NAT_GATEWAY }}
+      TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
+      TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check domain configuration
+        env:
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          ROUTE53_ZONE_ID: ${{ vars.ROUTE53_ZONE_ID }}
+        run: |
+          if [[ -z "$DOMAIN_NAME" || -z "$ROUTE53_ZONE_ID" ]]; then
+            echo "::error::Set DOMAIN_NAME and ROUTE53_ZONE_ID as repository variables."
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive terraform
+
+      - name: Terraform validate
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform validate
+
+      - name: Terraform plan
+        if: inputs.action != 'destroy'
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform plan -input=false -lock-timeout=5m -out=tfplan
+
+      - name: Terraform destroy plan
+        if: inputs.action == 'destroy'
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform plan -destroy -input=false -lock-timeout=5m -out=tfplan
+
+      - name: Render plan for review
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform show -no-color tfplan > tfplan.txt
+
+      - name: Publish plan artifact
+        id: plan-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ inputs.environment }}-${{ inputs.action }}
+          path: |
+            ${{ env.TF_DIR }}/tfplan
+            ${{ env.TF_DIR }}/tfplan.txt
+          retention-days: 1
+
+      - name: Plan review instructions
+        run: |
+          echo "## Terraform plan ready" >> "$GITHUB_STEP_SUMMARY"
+          echo "[Download and review the Terraform plan](${{ steps.plan-artifact.outputs.artifact-url }})" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ inputs.action }}" == "apply" || "${{ inputs.action }}" == "destroy" ]]; then
+            echo "The apply job now waits for approval in the protected dev Environment and applies this exact saved plan." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "This run is plan-only and makes no infrastructure changes." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  apply:
+    name: Apply reviewed ${{ inputs.action }} plan
+    needs: plan
+    if: github.ref == 'refs/heads/main' && (inputs.action == 'apply' || inputs.action == 'destroy')
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      TF_DIR: terraform/environments/${{ inputs.environment }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_owner: ${{ vars.OWNER }}
+      TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
+      TF_VAR_environment: ${{ vars.ENVIRONMENT }}
+      TF_VAR_vpc_cidr: ${{ vars.VPC_CIDR }}
+      TF_VAR_cluster_version: ${{ vars.CLUSTER_VERSION }}
+      TF_VAR_enable_nat_gateway: ${{ vars.ENABLE_NAT_GATEWAY }}
+      TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
+      TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check runtime credentials
+        if: inputs.action == 'apply'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: bash scripts/sync-runtime-secrets.sh validate
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      - name: Download reviewed plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ inputs.environment }}-${{ inputs.action }}
+          path: ${{ env.TF_DIR }}
+
+      - name: Install kubectl
+        if: inputs.action != 'plan'
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.0
+
+      - name: Install Helm
+        if: inputs.action != 'plan'
+        uses: azure/setup-helm@v4
+
+      - name: Remove platform add-ons before destroy
+        if: inputs.action == 'destroy'
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          OWNER: ${{ vars.OWNER }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: bash scripts/platform-addons.sh destroy
+
+      - name: Apply reviewed plan
+        if: inputs.action == 'apply' || inputs.action == 'destroy'
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
+
+      - name: Install platform add-ons
+        if: inputs.action == 'apply'
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          OWNER: ${{ vars.OWNER }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: bash scripts/platform-addons.sh install
+
+      - name: Sync runtime credentials
+        if: inputs.action == 'apply'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          OWNER: ${{ vars.OWNER }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: bash scripts/sync-runtime-secrets.sh sync

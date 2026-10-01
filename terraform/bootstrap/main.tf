@@ -12,10 +12,18 @@ variable "aws_region" { type = string }
 variable "owner" {
   type    = string
   default = "zein"
+  validation {
+    condition     = var.owner == "zein"
+    error_message = "Resource names must use the zein owner prefix."
+  }
 }
 variable "project_name" {
   type    = string
   default = "cloudbatch818"
+  validation {
+    condition     = var.project_name == "cloudbatch818"
+    error_message = "Project resource names must use the cloudbatch818 prefix."
+  }
 }
 
 provider "aws" {
@@ -23,7 +31,7 @@ provider "aws" {
   default_tags {
     tags = {
       Owner     = var.owner
-      Project   = var.project_name
+      Project   = "Cloudbatch818"
       ManagedBy = "terraform"
     }
   }
@@ -38,6 +46,27 @@ locals {
 
 resource "aws_s3_bucket" "terraform_state" {
   bucket = local.state_bucket_name
+  tags = {
+    Owner     = var.owner
+    Project   = "Cloudbatch818"
+    ManagedBy = "terraform"
+  }
+}
+
+resource "aws_kms_key" "terraform_state" {
+  description             = "Encrypt Terraform state for ${local.name_prefix}"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+  tags = {
+    Owner     = var.owner
+    Project   = "Cloudbatch818"
+    ManagedBy = "terraform"
+  }
+}
+
+resource "aws_kms_alias" "terraform_state" {
+  name          = "alias/${local.name_prefix}-terraform-state"
+  target_key_id = aws_kms_key.terraform_state.key_id
 }
 
 resource "aws_s3_bucket_versioning" "terraform_state" {
@@ -48,7 +77,11 @@ resource "aws_s3_bucket_versioning" "terraform_state" {
 resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state" {
   bucket = aws_s3_bucket.terraform_state.id
   rule {
-    apply_server_side_encryption_by_default { sse_algorithm = "AES256" }
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.terraform_state.arn
+    }
+    bucket_key_enabled = true
   }
 }
 
