@@ -1,79 +1,165 @@
 name: Application CD
 
 on:
-  workflow_run:
-    workflows: [Application CI]
-    types: [completed]
+  push:
     branches: [app]
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: Environment to deploy
-        required: true
-        type: choice
-        options: [dev, test, prod]
-        default: dev
+    paths:
+      - "services/**"
+      - "tests/**"
+      - "deploy/**"
+      - "docker-compose.yml"
+      - ".env.example"
+      - ".github/workflows/app-ci.yml"
+      - ".github/workflows/app-cd.yml"
 
 permissions:
   contents: read
   id-token: write
 
-env:
-  IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
-  TARGET_ENV: ${{ inputs.environment || 'dev' }}
+concurrency:
+  group: app-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  validate:
+    name: "Stage 1 — Release chart preflight"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Lint Helm chart
+        run: helm lint deploy/helm/retail
+
   publish:
-    name: Publish ${{ matrix.service }} image
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'app' &&
-      github.event.workflow_run.conclusion == 'success')
+    name: "Stage 2 — Build and publish ${{ matrix.service }}"
+    needs: validate
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service: [product, inventory, order, notification]
+        include:
+          - service: product
+            context: services/product-service
+          - service: inventory
+            context: services/inventory-service
+          - service: order
+            context: services/order-service
+          - service: notification
+            context: services/notification-service
+          - service: trip-planner
+            context: services/trip-planner
+          - service: storefront
+            context: services/storefront
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
       - id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-      - uses: docker/build-push-action@v6
-        with:
-          context: services/retail-service
-          push: true
-          tags: ${{ steps.login-ecr.outputs.registry }}/${{ vars.PROJECT_NAME }}-${{ env.TARGET_ENV }}/${{ matrix.service }}-service:${{ env.IMAGE_TAG }}
 
-  deploy:
-    name: Deploy to EKS
+      - name: Build and publish immutable commit image to both environments
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev/${{ matrix.service }}-service:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-prod/${{ matrix.service }}-service:${{ github.sha }}
+          cache-from: type=gha,scope=release-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.service }}
+
+  deploy-dev:
+    name: "Stage 3 — Deploy to dev"
     needs: publish
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment || 'dev' }}
+    environment: dev
+    env:
+      CLOUDFLARE_K8S_SECRET_NAME: ${{ vars.CLOUDFLARE_K8S_SECRET_NAME }}
+      GEMINI_K8S_SECRET_NAME: ${{ vars.GEMINI_K8S_SECRET_NAME }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
       - uses: azure/setup-helm@v4
+
+      - name: Verify runtime AI Secret references
+        run: |
+          if [ -z "$CLOUDFLARE_K8S_SECRET_NAME" ] || [ -z "$GEMINI_K8S_SECRET_NAME" ]; then
+            echo "::error::Set CLOUDFLARE_K8S_SECRET_NAME and GEMINI_K8S_SECRET_NAME in the dev GitHub Environment variables."
+            exit 1
+          fi
+
       - name: Configure kubectl
-        run: aws eks update-kubeconfig --name "${{ vars.PROJECT_NAME }}-${{ env.TARGET_ENV }}" --region "${{ vars.AWS_REGION }}"
+        run: aws eks update-kubeconfig --name "${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev" --region "${{ vars.AWS_REGION }}"
+
       - name: Deploy Helm release
         run: |
           helm upgrade --install retail deploy/helm/retail \
-            --namespace retail-${{ env.TARGET_ENV }} \
+            --namespace retail-dev \
             --create-namespace \
-            --set projectName=${{ vars.PROJECT_NAME }} \
-            --set environment=${{ env.TARGET_ENV }} \
-            --set imageRegistry=${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com \
-            --set imageTag=${{ env.IMAGE_TAG }} \
+            --set projectName="${{ vars.PROJECT_NAME }}" \
+            --set owner="${{ vars.OWNER }}" \
+            --set environment=dev \
+            --set imageRegistry="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com" \
+            --set imageTag="${{ github.sha }}" \
+            --set-string cloudflareSecret.name="$CLOUDFLARE_K8S_SECRET_NAME" \
+            --set-string geminiSecret.name="$GEMINI_K8S_SECRET_NAME" \
             --wait --timeout 10m
+
+      - name: Verify dev rollout
+        run: kubectl rollout status deployment -l app.kubernetes.io/part-of=retail --namespace retail-dev --timeout=10m
+
+  deploy-prod:
+    name: "Stage 4 — Promote approved commit to prod"
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      CLOUDFLARE_K8S_SECRET_NAME: ${{ vars.CLOUDFLARE_K8S_SECRET_NAME }}
+      GEMINI_K8S_SECRET_NAME: ${{ vars.GEMINI_K8S_SECRET_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: azure/setup-helm@v4
+
+      - name: Verify runtime AI Secret references
+        run: |
+          if [ -z "$CLOUDFLARE_K8S_SECRET_NAME" ] || [ -z "$GEMINI_K8S_SECRET_NAME" ]; then
+            echo "::error::Set CLOUDFLARE_K8S_SECRET_NAME and GEMINI_K8S_SECRET_NAME in the prod GitHub Environment variables."
+            exit 1
+          fi
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name "${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-prod" --region "${{ vars.AWS_REGION }}"
+
+      - name: Deploy approved commit
+        run: |
+          helm upgrade --install retail deploy/helm/retail \
+            --namespace retail-prod \
+            --create-namespace \
+            --set projectName="${{ vars.PROJECT_NAME }}" \
+            --set owner="${{ vars.OWNER }}" \
+            --set environment=prod \
+            --set imageRegistry="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com" \
+            --set imageTag="${{ github.sha }}" \
+            --set-string cloudflareSecret.name="$CLOUDFLARE_K8S_SECRET_NAME" \
+            --set-string geminiSecret.name="$GEMINI_K8S_SECRET_NAME" \
+            --wait --timeout 10m
+
+      - name: Verify prod rollout
+        run: kubectl rollout status deployment -l app.kubernetes.io/part-of=retail --namespace retail-prod --timeout=10m

@@ -1,14 +1,53 @@
 projectName: retail
+owner: zein
 environment: dev
 imageRegistry: 000000000000.dkr.ecr.us-east-1.amazonaws.com
 imageTag: latest
-
+replicaCount: 1
+aiProvider: cloudflare
+geminiModel: gemini-3.8-flash
+geminiSecret:
+  name: ""
+  key: GEMINI_API_KEY
+cloudflareSecret:
+  name: ""
+  apiTokenKey: CLOUDFLARE_API_TOKEN
+  accountIdKey: CLOUDFLARE_ACCOUNT_ID
 services:
   - name: product
+    imageName: product-service
     port: 8081
   - name: inventory
+    imageName: inventory-service
     port: 8082
   - name: order
+    imageName: order-service
     port: 8083
+    env:
+      - name: PRODUCT_SERVICE_URL
+        value: http://retail-product:8081
+      - name: INVENTORY_SERVICE_URL
+        value: http://retail-inventory:8082
   - name: notification
+    imageName: notification-service
     port: 8084
+  - name: trip-planner
+    imageName: trip-planner-service
+    port: 8086
+    env:
+      - name: PRODUCT_SERVICE_URL
+        value: http://retail-product:8081
+      - name: CLOUDFLARE_MODEL
+        value: "@cf/meta/llama-3.2-3b-instruct"
+  - name: storefront
+    imageName: storefront-service
+    port: 80
+    env:
+      - name: PRODUCT_SERVICE_URL
+        value: http://retail-product:8081
+      - name: INVENTORY_SERVICE_URL
+        value: http://retail-inventory:8082
+      - name: ORDER_SERVICE_URL
+        value: http://retail-order:8083
+      - name: TRIP_PLANNER_URL
+        value: http://retail-trip-planner:8086

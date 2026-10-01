@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
@@ -7,19 +8,15 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 
-SERVICE = os.getenv("SERVICE_NAME", "retail-service")
+SERVICE = "order-service"
 PORT = int(os.getenv("PORT", "8080"))
 PRODUCT_SERVICE_URL = os.getenv("PRODUCT_SERVICE_URL", "http://product-service:8080")
 INVENTORY_SERVICE_URL = os.getenv("INVENTORY_SERVICE_URL", "http://inventory-service:8080")
 
-PRODUCTS = {
-    "prod-001": {"productId": "prod-001", "name": "Everyday Backpack", "price": 49.99, "category": "bags"},
-    "prod-002": {"productId": "prod-002", "name": "Insulated Bottle", "price": 24.99, "category": "accessories"},
-    "prod-003": {"productId": "prod-003", "name": "Travel Hoodie", "price": 64.99, "category": "apparel"},
-}
-
-INVENTORY = {"prod-001": 10, "prod-002": 25, "prod-003": 5}
+INVENTORY = {"orbit-001": 8, "orbit-002": 4, "orbit-003": 6}
 ORDERS = {}
+INVENTORY_LOCK = threading.Lock()
+ORDERS_LOCK = threading.Lock()
 
 
 def json_request(url, method="GET", body=None):
@@ -64,9 +61,17 @@ class Handler(BaseHTTPRequestHandler):
             if product_id not in INVENTORY:
                 return self._write(404, {"error": "inventory not found"})
             return self._write(200, {"productId": product_id, "available": INVENTORY[product_id]})
+        if SERVICE == "inventory-service" and path == "/inventory":
+            with INVENTORY_LOCK:
+                items = [
+                    {"productId": product_id, "available": available}
+                    for product_id, available in INVENTORY.items()
+                ]
+            return self._write(200, {"items": items})
 
         if SERVICE == "order-service" and path.startswith("/orders/"):
-            order = ORDERS.get(path.split("/")[-1])
+            with ORDERS_LOCK:
+                order = ORDERS.get(path.split("/")[-1])
             return self._write(200, order) if order else self._write(404, {"error": "order not found"})
 
         return self._write(404, {"error": "not found"})
@@ -78,39 +83,61 @@ class Handler(BaseHTTPRequestHandler):
             return self._write(400, {"error": "invalid JSON body"})
 
         if SERVICE == "inventory-service" and path == "/inventory/reservations":
+            if not isinstance(body, dict):
+                return self._write(400, {"error": "request body must be an object"})
             items = body.get("items", [])
             if not items:
                 return self._write(400, {"error": "items are required"})
+            if not isinstance(items, list):
+                return self._write(400, {"error": "items must be a list"})
+            requested = {}
             for item in items:
+                if not isinstance(item, dict):
+                    return self._write(400, {"error": "invalid inventory item"})
                 product_id = item.get("productId")
                 quantity = item.get("quantity", 0)
-                if product_id not in INVENTORY or not isinstance(quantity, int) or quantity < 1:
+                if product_id not in INVENTORY or type(quantity) is not int or quantity < 1:
                     return self._write(400, {"error": "invalid inventory item"})
-                if INVENTORY[product_id] < quantity:
-                    return self._write(409, {"error": "insufficient inventory", "productId": product_id})
-            for item in items:
-                INVENTORY[item["productId"]] -= item["quantity"]
-            return self._write(201, {"status": "RESERVED", "items": items, "event": "InventoryReserved"})
+                requested[product_id] = requested.get(product_id, 0) + quantity
+            with INVENTORY_LOCK:
+                for product_id, quantity in requested.items():
+                    if INVENTORY[product_id] < quantity:
+                        return self._write(409, {"error": "insufficient inventory", "productId": product_id})
+                for product_id, quantity in requested.items():
+                    INVENTORY[product_id] -= quantity
+            reserved = [{"productId": product_id, "quantity": quantity} for product_id, quantity in requested.items()]
+            return self._write(201, {"status": "RESERVED", "items": reserved, "event": "InventoryReserved"})
 
         if SERVICE == "order-service" and path == "/orders":
+            if not isinstance(body, dict):
+                return self._write(400, {"error": "request body must be an object"})
             items = body.get("items", [])
-            if not items:
+            if not isinstance(items, list) or not items:
                 return self._write(400, {"error": "items are required"})
 
             try:
-                product_items = []
-                total = 0.0
+                requested = {}
                 for item in items:
+                    if not isinstance(item, dict):
+                        return self._write(400, {"error": "invalid order item"})
                     product_id = item.get("productId")
                     quantity = item.get("quantity", 0)
-                    if not isinstance(quantity, int) or quantity < 1:
+                    if not isinstance(product_id, str) or type(quantity) is not int or quantity < 1:
                         return self._write(400, {"error": "quantity must be a positive integer"})
+                    requested[product_id] = requested.get(product_id, 0) + quantity
+
+                product_items = []
+                total = 0.0
+                normalized_items = [{"productId": product_id, "quantity": quantity} for product_id, quantity in requested.items()]
+                for item in normalized_items:
+                    product_id = item["productId"]
+                    quantity = item["quantity"]
                     _, product = json_request(f"{PRODUCT_SERVICE_URL}/products/{product_id}")
                     line_total = round(product["price"] * quantity, 2)
                     total += line_total
                     product_items.append({**item, "name": product["name"], "unitPrice": product["price"], "lineTotal": line_total})
                 _, inventory = json_request(
-                    f"{INVENTORY_SERVICE_URL}/inventory/reservations", method="POST", body={"items": items}
+                    f"{INVENTORY_SERVICE_URL}/inventory/reservations", method="POST", body={"items": normalized_items}
                 )
             except HTTPError as error:
                 details = json.loads(error.read() or b"{}")
@@ -127,7 +154,8 @@ class Handler(BaseHTTPRequestHandler):
                 "inventory": inventory,
                 "event": "OrderCreated",
             }
-            ORDERS[order_id] = order
+            with ORDERS_LOCK:
+                ORDERS[order_id] = order
             return self._write(201, order)
 
         return self._write(404, {"error": "not found"})
