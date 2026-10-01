@@ -8,8 +8,8 @@ containers, Helm application chart, and app CI/CD live in the separate `app` bra
 - A VPC, public/private subnets, one NAT gateway, and an EKS cluster with managed nodes.
 - Six immutable ECR repositories: product, inventory, order, notification, trip planner,
   and storefront.
-- A lean dev data tier: one private, single-AZ MySQL RDS instance, a DynamoDB inventory
-  table, and a private Valkey Serverless cache.
+- A lean data tier per environment: one private, single-AZ MySQL RDS instance, a DynamoDB
+  inventory table, and a private Valkey Serverless cache.
 - An order-events SQS queue with a dead-letter queue and an EventBridge event bus.
 - Service-scoped Secrets Manager entries and workload IAM roles.
 - An ACM certificate and IAM roles for the ingress and DNS controllers.
@@ -31,15 +31,18 @@ EventBridge rules/targets, queue consumers, and SES email delivery are not creat
 The architecture diagram is a broader target design; see
 [architecture notes](docs/architecture/README.md) for the current boundary.
 
-The dev data tier keeps MySQL and Valkey in private subnets and allows access only from
+Each environment keeps MySQL and Valkey in private subnets and allows access only from
 EKS worker nodes. RDS manages its master credential in Secrets Manager; applications
 should use a restricted runtime DB user rather than the master account. Valkey is a
 cache-aside learning component for product reads, never the source of truth for inventory.
-The RDS instance and Serverless cache have ongoing costs while provisioned; destroy the
-dev environment when it is not needed. DynamoDB uses on-demand billing.
+The RDS instance and Serverless cache have ongoing costs while provisioned; destroy an
+environment when it is not needed. DynamoDB uses on-demand billing.
 
-Only `dev` is deployable from the Terraform workflow. Test/prod folders are retained as
-reference stubs but the platform module rejects non-dev environments.
+The workflow supports `dev`, `test`, and `prod`, each with an independent state key and
+environment-specific CIDR/domain defaults. These are functional demo stacks, not a
+production-hardened reference architecture. Applying test or prod creates additional
+billable infrastructure; keep those GitHub Environments approval-protected and destroy
+the stacks when finished.
 
 ## Repository structure
 
@@ -66,23 +69,22 @@ Set these repository variables:
 | `OWNER` | Resource-name prefix component, currently `zein` |
 | `PROJECT_NAME` | Resource-name prefix component, currently `cloudbatch818` |
 | `TF_STATE_BUCKET` | S3 bucket created by the bootstrap workflow |
-
-Set these non-secret values as repository variables. The Terraform plan job needs them
-before the approval-gated apply job enters the `dev` Environment:
-
-| Variable | Example / requirement |
-| --- | --- |
-| `ENVIRONMENT` | `dev` |
-| `VPC_CIDR` | Dev network, `10.40.0.0/16` |
+| `ROUTE53_ZONE_ID` | Existing public hosted zone ID shared by the environments |
 | `CLUSTER_VERSION` | Supported EKS Kubernetes version |
-| `ENABLE_NAT_GATEWAY` | `true` for private-subnet outbound access |
-| `DOMAIN_NAME` | Public storefront hostname, currently `cloudbatch818.click` |
-| `ROUTE53_ZONE_ID` | ID of the existing public zone for `cloudbatch818.click` |
+
+The workflow derives the environment from the selected input. CIDRs and domains are set
+in each Terraform root: dev uses
+`10.40.0.0/16` and `cloudbatch818.click`, test uses `10.50.0.0/16` and
+`test.cloudbatch818.click`, and prod uses `10.60.0.0/16` and
+`prod.cloudbatch818.click`. All three hostnames must exist within the selected public
+Route 53 hosted zone. NAT gateways are enabled by default in every environment.
 
 Do not create a second hosted zone. Confirm the domain registration delegates to the
 existing zone's Route 53 name servers. The configured hostname must be inside that zone.
 
-Add these GitHub Actions secrets to the `dev` Environment:
+Create GitHub Environments named `dev`, `test`, and `prod`; configure required reviewers
+for each before using `apply` or `destroy`. Add the following secrets to every environment
+you intend to apply:
 
 | Secret | Used by |
 | --- | --- |
@@ -134,18 +136,18 @@ deploy application images.
 
 - **Infra CI:** pull requests targeting `main` run Terraform format/validate plus Trivy
   Terraform misconfiguration and secret scans. A merge to `main` triggers the same checks.
-- **Infra CD:** only `workflow_dispatch` runs it, and only from `main`. `plan` creates a
-  review artifact without applying. `apply` and `destroy` create the corresponding saved
-  plan, publish it for review, then pause at the `dev` Environment before applying that
-  exact plan. Set required reviewers on that GitHub Environment. Plan artifacts contain
+- **Infra CD:** only `workflow_dispatch` runs it, and only from `main`. Choose `dev`, `test`,
+  or `prod`. `plan` creates a review artifact without applying. `apply` and `destroy`
+  create the corresponding saved plan, publish it for review, then pause at the selected
+  protected GitHub Environment before applying that exact plan. Plan artifacts contain
   Terraform plan data and are retained for one day; restrict repository artifact access.
 - **Bootstrap:** also manual and main-only. It creates the state bucket and applies its
   own plan in that run; run it once before infrastructure CD.
 
 The plan job runs without a GitHub Environment so it can finish before the approval gate.
-Put deployment configuration in repository variables as listed above. Configure the AWS
-OIDC role trust to allow the main-branch subject for plan and the `dev` Environment subject
-for apply. Keep AWS permissions as narrow as possible.
+Put shared deployment configuration in repository variables as listed above. Configure
+the AWS OIDC role trust to allow the `main` branch subject for plans and the `dev`, `test`,
+and `prod` Environment subjects for applies. Keep AWS permissions as narrow as possible.
 
 The application workflows are separate on the `app` branch:
 

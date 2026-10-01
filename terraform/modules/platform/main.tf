@@ -2,8 +2,8 @@ variable "name" { type = string }
 variable "environment" {
   type = string
   validation {
-    condition     = var.environment == "dev"
-    error_message = "This project currently provisions dev only."
+    condition     = contains(["dev", "test", "prod"], var.environment)
+    error_message = "Environment must be dev, test, or prod."
   }
 }
 variable "vpc_cidr" { type = string }

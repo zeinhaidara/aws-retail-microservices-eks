@@ -43,6 +43,7 @@ variable "enable_nat_gateway" {
 variable "domain_name" {
   type        = string
   description = "Public storefront hostname covered by the ACM certificate."
+  default     = "cloudbatch818.click"
 }
 
 variable "route53_zone_id" {
