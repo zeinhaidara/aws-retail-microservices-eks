@@ -35,7 +35,6 @@ jobs:
       TF_VAR_owner: ${{ vars.OWNER }}
       TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
       TF_VAR_environment: ${{ inputs.environment }}
-      TF_VAR_cluster_version: ${{ vars.CLUSTER_VERSION }}
       TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
 
     steps:
@@ -114,7 +113,6 @@ jobs:
       TF_VAR_owner: ${{ vars.OWNER }}
       TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
       TF_VAR_environment: ${{ inputs.environment }}
-      TF_VAR_cluster_version: ${{ vars.CLUSTER_VERSION }}
       TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
 
     steps:
