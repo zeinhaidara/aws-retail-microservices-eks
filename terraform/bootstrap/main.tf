@@ -53,6 +53,22 @@ resource "aws_s3_bucket" "terraform_state" {
   }
 }
 
+resource "aws_kms_key" "terraform_state" {
+  description             = "Encrypt Terraform state for ${local.name_prefix}"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+  tags = {
+    Owner     = var.owner
+    Project   = "Cloudbatch818"
+    ManagedBy = "terraform"
+  }
+}
+
+resource "aws_kms_alias" "terraform_state" {
+  name          = "alias/${local.name_prefix}-terraform-state"
+  target_key_id = aws_kms_key.terraform_state.key_id
+}
+
 resource "aws_s3_bucket_versioning" "terraform_state" {
   bucket = aws_s3_bucket.terraform_state.id
   versioning_configuration { status = "Enabled" }
@@ -61,7 +77,11 @@ resource "aws_s3_bucket_versioning" "terraform_state" {
 resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state" {
   bucket = aws_s3_bucket.terraform_state.id
   rule {
-    apply_server_side_encryption_by_default { sse_algorithm = "AES256" }
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.terraform_state.arn
+    }
+    bucket_key_enabled = true
   }
 }
 

@@ -2,13 +2,15 @@ variable "name" { type = string }
 variable "tags" { type = map(string) }
 
 resource "aws_sqs_queue" "order_events_dlq" {
-  name = "${var.name}-order-events-dlq"
-  tags = var.tags
+  name                    = "${var.name}-order-events-dlq"
+  sqs_managed_sse_enabled = true
+  tags                    = var.tags
 }
 
 resource "aws_sqs_queue" "order_events" {
   name                       = "${var.name}-order-events"
   visibility_timeout_seconds = 60
+  sqs_managed_sse_enabled    = true
   tags                       = var.tags
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.order_events_dlq.arn
