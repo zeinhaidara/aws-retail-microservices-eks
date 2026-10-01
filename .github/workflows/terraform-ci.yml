@@ -20,7 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        root: [terraform/bootstrap, terraform/environments/dev]
+        root:
+          - terraform/bootstrap
+          - terraform/environments/dev
+          - terraform/environments/test
+          - terraform/environments/prod
     steps:
       - uses: actions/checkout@v4
 

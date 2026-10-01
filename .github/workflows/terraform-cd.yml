@@ -7,7 +7,7 @@ on:
         description: Target environment
         required: true
         type: choice
-        options: [dev]
+        options: [dev, test, prod]
         default: dev
       action:
         description: Terraform action
@@ -21,7 +21,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: terraform-dev
+  group: terraform-${{ inputs.environment }}
   cancel-in-progress: false
 
 jobs:
@@ -34,23 +34,19 @@ jobs:
       TF_VAR_aws_region: ${{ vars.AWS_REGION }}
       TF_VAR_owner: ${{ vars.OWNER }}
       TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
-      TF_VAR_environment: ${{ vars.ENVIRONMENT }}
-      TF_VAR_vpc_cidr: ${{ vars.VPC_CIDR }}
+      TF_VAR_environment: ${{ inputs.environment }}
       TF_VAR_cluster_version: ${{ vars.CLUSTER_VERSION }}
-      TF_VAR_enable_nat_gateway: ${{ vars.ENABLE_NAT_GATEWAY }}
-      TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
       TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check domain configuration
+      - name: Check shared Route 53 configuration
         env:
-          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           ROUTE53_ZONE_ID: ${{ vars.ROUTE53_ZONE_ID }}
         run: |
-          if [[ -z "$DOMAIN_NAME" || -z "$ROUTE53_ZONE_ID" ]]; then
-            echo "::error::Set DOMAIN_NAME and ROUTE53_ZONE_ID as repository variables."
+          if [[ -z "$ROUTE53_ZONE_ID" ]]; then
+            echo "::error::Set ROUTE53_ZONE_ID as a repository variable."
             exit 1
           fi
 
@@ -101,7 +97,7 @@ jobs:
           echo "## Terraform plan ready" >> "$GITHUB_STEP_SUMMARY"
           echo "[Download and review the Terraform plan](${{ steps.plan-artifact.outputs.artifact-url }})" >> "$GITHUB_STEP_SUMMARY"
           if [[ "${{ inputs.action }}" == "apply" || "${{ inputs.action }}" == "destroy" ]]; then
-            echo "The apply job now waits for approval in the protected dev Environment and applies this exact saved plan." >> "$GITHUB_STEP_SUMMARY"
+            echo "The apply job waits for approval in the protected ${{ inputs.environment }} Environment and applies this exact saved plan." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "This run is plan-only and makes no infrastructure changes." >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -111,17 +107,14 @@ jobs:
     needs: plan
     if: github.ref == 'refs/heads/main' && (inputs.action == 'apply' || inputs.action == 'destroy')
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ inputs.environment }}
     env:
       TF_DIR: terraform/environments/${{ inputs.environment }}
       TF_VAR_aws_region: ${{ vars.AWS_REGION }}
       TF_VAR_owner: ${{ vars.OWNER }}
       TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
-      TF_VAR_environment: ${{ vars.ENVIRONMENT }}
-      TF_VAR_vpc_cidr: ${{ vars.VPC_CIDR }}
+      TF_VAR_environment: ${{ inputs.environment }}
       TF_VAR_cluster_version: ${{ vars.CLUSTER_VERSION }}
-      TF_VAR_enable_nat_gateway: ${{ vars.ENABLE_NAT_GATEWAY }}
-      TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
       TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
 
     steps:
