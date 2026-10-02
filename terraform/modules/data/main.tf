@@ -95,6 +95,7 @@ resource "aws_elasticache_serverless_cache" "valkey" {
 }
 
 output "inventory_table_name" { value = aws_dynamodb_table.inventory.name }
+output "inventory_table_arn" { value = aws_dynamodb_table.inventory.arn }
 output "mysql_endpoint" { value = aws_db_instance.mysql.address }
 output "mysql_port" { value = aws_db_instance.mysql.port }
 output "mysql_database_name" { value = aws_db_instance.mysql.db_name }

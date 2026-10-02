@@ -1,6 +1,7 @@
 variable "name" { type = string }
 variable "domain_name" { type = string }
 variable "route53_zone_id" { type = string }
+variable "create_ses_identity" { type = bool }
 variable "oidc_provider_arn" { type = string }
 variable "oidc_issuer_url" { type = string }
 variable "tags" { type = map(string) }
@@ -117,6 +118,28 @@ locals {
 }
 
 data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
+resource "aws_sesv2_email_identity" "notifications" {
+  count          = var.create_ses_identity ? 1 : 0
+  email_identity = var.domain_name
+  tags           = var.tags
+
+  dkim_signing_attributes {
+    next_signing_key_length = "RSA_2048_BIT"
+  }
+}
+
+resource "aws_route53_record" "ses_dkim" {
+  for_each = var.create_ses_identity ? toset(aws_sesv2_email_identity.notifications[0].dkim_signing_attributes[0].tokens) : toset([])
+
+  zone_id = var.route53_zone_id
+  name    = "${each.value}._domainkey.${var.domain_name}"
+  type    = "CNAME"
+  ttl     = 300
+  records = ["${each.value}.dkim.amazonses.com"]
+}
 
 resource "aws_acm_certificate" "storefront" {
   domain_name       = var.domain_name
@@ -205,5 +228,9 @@ moved {
 }
 
 output "certificate_arn" { value = aws_acm_certificate_validation.storefront.certificate_arn }
+output "ses_identity_arn" {
+  value = "arn:${data.aws_partition.current.partition}:ses:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:identity/${var.domain_name}"
+}
+output "ses_from_address" { value = var.create_ses_identity ? "orders@${var.domain_name}" : "" }
 output "load_balancer_controller_role_arn" { value = module.load_balancer_controller_role.arn }
 output "external_dns_role_arn" { value = module.external_dns_role.arn }
