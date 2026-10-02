@@ -70,7 +70,6 @@ Set these repository variables:
 | `PROJECT_NAME` | Resource-name prefix component, currently `cloudbatch818` |
 | `TF_STATE_BUCKET` | S3 bucket created by the bootstrap workflow |
 | `ROUTE53_ZONE_ID` | Existing public hosted zone ID shared by the environments |
-| `CLUSTER_VERSION` | Supported EKS Kubernetes version |
 
 The workflow derives the environment from the selected input. CIDRs and domains are set
 in each Terraform root: dev uses
@@ -78,6 +77,8 @@ in each Terraform root: dev uses
 `test.cloudbatch818.click`, and prod uses `10.60.0.0/16` and
 `prod.cloudbatch818.click`. All three hostnames must exist within the selected public
 Route 53 hosted zone. NAT gateways are enabled by default in every environment.
+Each Terraform root pins its EKS Kubernetes version; update the environment's
+`cluster_version` default when upgrading the cluster.
 
 Do not create a second hosted zone. Confirm the domain registration delegates to the
 existing zone's Route 53 name servers. The configured hostname must be inside that zone.
