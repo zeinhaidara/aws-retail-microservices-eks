@@ -7,8 +7,9 @@ RUN apt-get update \
     && apt-get upgrade --yes \
     && rm -rf /var/lib/apt/lists/*
 
-COPY app.py .
+COPY --chown=65534:65534 server.py index.html ./
+COPY --chown=65534:65534 assets ./assets
 
-USER nobody
+USER 65534:65534
 EXPOSE 8080
-CMD ["python", "app.py"]
+CMD ["python", "server.py"]

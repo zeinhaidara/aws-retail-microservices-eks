@@ -3,10 +3,25 @@ name: Application CI
 on:
   pull_request:
     branches: [app]
-    paths: ["services/**", "tests/**", "deploy/**", "docker-compose.yml", ".github/workflows/app-ci.yml"]
+    paths:
+      - "services/**"
+      - "tests/**"
+      - "deploy/**"
+      - "docker-compose.yml"
+      - ".env.example"
+      - ".github/workflows/app-ci.yml"
+      - ".github/workflows/app-cd.yml"
+
   push:
     branches: [app]
-    paths: ["services/**", "tests/**", "deploy/**", "docker-compose.yml", ".github/workflows/app-ci.yml"]
+    paths:
+      - "services/**"
+      - "tests/**"
+      - "deploy/**"
+      - "docker-compose.yml"
+      - ".env.example"
+      - ".github/workflows/app-ci.yml"
+      - ".github/workflows/app-cd.yml"
 
 permissions:
   contents: read
@@ -14,43 +29,82 @@ permissions:
   security-events: write
   pull-requests: read
 
+concurrency:
+  group: app-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
-    name: Validate application
+    name: "Stage 1 — Validate configuration"
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose config --quiet
+
+      - name: Validate Docker Compose
+        run: docker compose config --quiet
+
       - uses: azure/setup-helm@v4
-      - run: helm lint deploy/helm/retail
+
+      - name: Lint Helm chart
+        run: helm lint deploy/helm/retail
 
   test:
-    name: Run application smoke test
+    name: "Stage 2 — Integration smoke test"
     needs: validate
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose up --build --detach
-      - run: pwsh -File tests/smoke.ps1
-      - if: always()
+
+      - name: Start application
+        run: docker compose up --build --detach
+
+      - name: Run smoke tests
+        run: pwsh -File tests/smoke.ps1
+
+      - name: Stop application
+        if: always()
         run: docker compose down --volumes --remove-orphans
 
   security:
-    name: Scan ${{ matrix.service }} image
+    name: "Stage 2 — Scan ${{ matrix.service }} image"
     needs: validate
     runs-on: ubuntu-latest
+
     strategy:
       fail-fast: false
       matrix:
-        service: [product, inventory, order, notification]
+        include:
+          - service: product
+            context: services/product-service
+          - service: inventory
+            context: services/inventory-service
+          - service: order
+            context: services/order-service
+          - service: notification
+            context: services/notification-service
+          - service: trip-planner
+            context: services/trip-planner
+          - service: storefront
+            context: services/storefront
+
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/build-push-action@v6
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
         with:
-          context: services/retail-service
+          context: ${{ matrix.context }}
           load: true
           tags: local/${{ matrix.service }}:${{ github.sha }}
-      - uses: aquasecurity/trivy-action@v0.36.0
+          cache-from: type=gha,scope=ci-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=ci-${{ matrix.service }}
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: local/${{ matrix.service }}:${{ github.sha }}
           severity: HIGH,CRITICAL
@@ -58,21 +112,29 @@ jobs:
           exit-code: "1"
 
   codeql:
-    name: CodeQL analysis
+    name: "Stage 2 — CodeQL analysis"
+    needs: validate
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: github/codeql-action/init@v3
         with:
           languages: python
+
       - uses: github/codeql-action/analyze@v3
 
   filesystem-security:
-    name: Scan source and configuration
+    name: "Stage 2 — Scan source and configuration"
+    needs: validate
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@v0.36.0
+
+      - name: Scan source and configuration
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -82,11 +144,14 @@ jobs:
           exit-code: "1"
 
   dependency-review:
-    name: Dependency review
+    name: "Stage 2 — Dependency review"
     if: github.event_name == 'pull_request'
+    needs: validate
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high

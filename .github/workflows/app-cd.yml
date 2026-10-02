@@ -1,79 +1,145 @@
 name: Application CD
 
 on:
-  workflow_run:
-    workflows: [Application CI]
-    types: [completed]
+  push:
     branches: [app]
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: Environment to deploy
-        required: true
-        type: choice
-        options: [dev, test, prod]
-        default: dev
+    paths:
+      - "services/**"
+      - "tests/**"
+      - "deploy/**"
+      - "docker-compose.yml"
+      - ".env.example"
+      - ".github/workflows/app-ci.yml"
+      - ".github/workflows/app-cd.yml"
 
 permissions:
   contents: read
   id-token: write
 
-env:
-  IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
-  TARGET_ENV: ${{ inputs.environment || 'dev' }}
+concurrency:
+  group: app-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  validate:
+    name: "Stage 1 — Release chart preflight"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Lint Helm chart
+        run: helm lint deploy/helm/retail
+
   publish:
-    name: Publish ${{ matrix.service }} image
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'app' &&
-      github.event.workflow_run.conclusion == 'success')
+    name: "Stage 2 — Build and publish ${{ matrix.service }}"
+    needs: validate
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service: [product, inventory, order, notification]
+        include:
+          - service: product
+            context: services/product-service
+          - service: inventory
+            context: services/inventory-service
+          - service: order
+            context: services/order-service
+          - service: notification
+            context: services/notification-service
+          - service: trip-planner
+            context: services/trip-planner
+          - service: storefront
+            context: services/storefront
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
       - id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-      - uses: docker/build-push-action@v6
-        with:
-          context: services/retail-service
-          push: true
-          tags: ${{ steps.login-ecr.outputs.registry }}/${{ vars.PROJECT_NAME }}-${{ env.TARGET_ENV }}/${{ matrix.service }}-service:${{ env.IMAGE_TAG }}
 
-  deploy:
-    name: Deploy to EKS
+      - name: Build and publish immutable commit image to both environments
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev/${{ matrix.service }}-service:${{ github.sha }}
+          cache-from: type=gha,scope=release-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.service }}
+
+  deploy-dev:
+    name: "Stage 3 — Deploy to dev"
     needs: publish
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment || 'dev' }}
+    environment: dev
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Checkout infrastructure configuration
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: infrastructure
+
+      - uses: hashicorp/setup-terraform@v3
+
       - uses: azure/setup-helm@v4
+
+      - name: Read applied infrastructure outputs
+        id: infra
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          if [ -z "$TF_STATE_BUCKET" ]; then
+            echo "::error::Set TF_STATE_BUCKET as a repository variable."
+            exit 1
+          fi
+          terraform -chdir=infrastructure/terraform/environments/dev init -input=false -backend-config="bucket=$TF_STATE_BUCKET"
+          outputs="$(terraform -chdir=infrastructure/terraform/environments/dev output -json)"
+          for key in cluster_name inventory_table_name mysql_endpoint mysql_port mysql_database_name mysql_master_secret_arn valkey_endpoint valkey_port order_events_queue_url event_bus_name inventory_role_arn order_role_arn notification_role_arn ses_from_address; do
+            printf '%s=%s\n' "$key" "$(jq -r --arg key "$key" '.[$key].value' <<< "$outputs")" >> "$GITHUB_OUTPUT"
+          done
+
       - name: Configure kubectl
-        run: aws eks update-kubeconfig --name "${{ vars.PROJECT_NAME }}-${{ env.TARGET_ENV }}" --region "${{ vars.AWS_REGION }}"
+        run: aws eks update-kubeconfig --name "${{ steps.infra.outputs.cluster_name }}" --region "${{ vars.AWS_REGION }}"
+
       - name: Deploy Helm release
         run: |
           helm upgrade --install retail deploy/helm/retail \
-            --namespace retail-${{ env.TARGET_ENV }} \
+            --namespace retail-dev \
             --create-namespace \
-            --set projectName=${{ vars.PROJECT_NAME }} \
-            --set environment=${{ env.TARGET_ENV }} \
-            --set imageRegistry=${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com \
-            --set imageTag=${{ env.IMAGE_TAG }} \
+            --set projectName="${{ vars.PROJECT_NAME }}" \
+            --set owner="${{ vars.OWNER }}" \
+            --set environment=dev \
+            --set imageRegistry="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com" \
+            --set imageTag="${{ github.sha }}" \
+            --set-string aws.region="${{ vars.AWS_REGION }}" \
+            --set-string aws.inventoryTableName="${{ steps.infra.outputs.inventory_table_name }}" \
+            --set-string aws.mysqlHost="${{ steps.infra.outputs.mysql_endpoint }}" \
+            --set-string aws.mysqlPort="${{ steps.infra.outputs.mysql_port }}" \
+            --set-string aws.mysqlDatabase="${{ steps.infra.outputs.mysql_database_name }}" \
+            --set-string aws.mysqlSecretArn="${{ steps.infra.outputs.mysql_master_secret_arn }}" \
+            --set-string aws.valkeyHost="${{ steps.infra.outputs.valkey_endpoint }}" \
+            --set-string aws.valkeyPort="${{ steps.infra.outputs.valkey_port }}" \
+            --set-string aws.orderEventsQueueUrl="${{ steps.infra.outputs.order_events_queue_url }}" \
+            --set-string aws.eventBusName="${{ steps.infra.outputs.event_bus_name }}" \
+            --set-string aws.sesFromAddress="${{ steps.infra.outputs.ses_from_address }}" \
+            --set-string serviceAccountRoles.inventory="${{ steps.infra.outputs.inventory_role_arn }}" \
+            --set-string serviceAccountRoles.order="${{ steps.infra.outputs.order_role_arn }}" \
+            --set-string serviceAccountRoles.notification="${{ steps.infra.outputs.notification_role_arn }}" \
             --wait --timeout 10m
+
+      - name: Verify dev rollout
+        run: kubectl rollout status deployment -l app.kubernetes.io/part-of=retail --namespace retail-dev --timeout=10m

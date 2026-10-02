@@ -1,4 +1,17 @@
 {{- range .Values.services }}
+{{- $roleArn := index $.Values.serviceAccountRoles .name | default "" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $.Release.Name }}-{{ .name }}
+  labels:
+    app.kubernetes.io/name: {{ .name }}
+    app.kubernetes.io/part-of: retail
+  {{- if $roleArn }}
+  annotations:
+    eks.amazonaws.com/role-arn: {{ $roleArn | quote }}
+  {{- end }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,7 +20,7 @@ metadata:
     app.kubernetes.io/name: {{ .name }}
     app.kubernetes.io/part-of: retail
 spec:
-  replicas: 1
+  replicas: {{ $.Values.replicaCount }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ .name }}
@@ -17,6 +30,7 @@ spec:
         app.kubernetes.io/name: {{ .name }}
         app.kubernetes.io/part-of: retail
     spec:
+      serviceAccountName: {{ $.Release.Name }}-{{ .name }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
@@ -25,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: {{ .name }}
-          image: {{ $.Values.imageRegistry }}/{{ $.Values.projectName }}-{{ $.Values.environment }}/{{ .name }}-service:{{ $.Values.imageTag }}
+          image: {{ $.Values.imageRegistry }}/{{ $.Values.projectName }}-{{ $.Values.owner }}-{{ $.Values.environment }}/{{ .imageName }}:{{ $.Values.imageTag }}
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -36,6 +50,72 @@ spec:
           env:
             - name: SERVICE_NAME
               value: {{ .name }}-service
+            {{- if eq .name "inventory" }}
+            - name: DYNAMODB_TABLE_NAME
+              value: {{ $.Values.aws.inventoryTableName | quote }}
+            - name: AWS_REGION
+              value: {{ $.Values.aws.region | quote }}
+            {{- end }}
+            {{- if eq .name "order" }}
+            - name: MYSQL_HOST
+              value: {{ $.Values.aws.mysqlHost | quote }}
+            - name: MYSQL_PORT
+              value: {{ $.Values.aws.mysqlPort | quote }}
+            - name: MYSQL_DATABASE
+              value: {{ $.Values.aws.mysqlDatabase | quote }}
+            - name: MYSQL_SECRET_ARN
+              value: {{ $.Values.aws.mysqlSecretArn | quote }}
+            - name: EVENT_BUS_NAME
+              value: {{ $.Values.aws.eventBusName | quote }}
+            - name: AWS_REGION
+              value: {{ $.Values.aws.region | quote }}
+            {{- end }}
+            {{- if eq .name "product" }}
+            - name: VALKEY_HOST
+              value: {{ $.Values.aws.valkeyHost | quote }}
+            - name: VALKEY_PORT
+              value: {{ $.Values.aws.valkeyPort | quote }}
+            - name: VALKEY_TLS
+              value: "true"
+            {{- end }}
+            {{- if eq .name "notification" }}
+            - name: ORDER_EVENTS_QUEUE_URL
+              value: {{ $.Values.aws.orderEventsQueueUrl | quote }}
+            - name: ORDER_SERVICE_URL
+              value: http://{{ $.Release.Name }}-order:8083
+            - name: SES_FROM_ADDRESS
+              value: {{ $.Values.aws.sesFromAddress | quote }}
+            - name: AWS_REGION
+              value: {{ $.Values.aws.region | quote }}
+            {{- end }}
+            {{- if eq .name "trip-planner" }}
+            - name: AI_PROVIDER
+              value: {{ $.Values.aiProvider | quote }}
+            - name: GEMINI_MODEL
+              value: {{ $.Values.geminiModel | quote }}
+            {{- end }}
+            {{- with .env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if and (eq .name "trip-planner") $.Values.geminiSecret.name }}
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.geminiSecret.name | quote }}
+                  key: {{ $.Values.geminiSecret.key | quote }}
+            {{- end }}
+            {{- if and (eq .name "trip-planner") $.Values.cloudflareSecret.name }}
+            - name: CLOUDFLARE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.cloudflareSecret.name | quote }}
+                  key: {{ $.Values.cloudflareSecret.apiTokenKey | quote }}
+            - name: CLOUDFLARE_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.cloudflareSecret.name | quote }}
+                  key: {{ $.Values.cloudflareSecret.accountIdKey | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080
