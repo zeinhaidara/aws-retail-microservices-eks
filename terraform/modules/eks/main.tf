@@ -23,6 +23,15 @@ module "eks" {
   create_node_security_group               = false
   tags                                     = var.tags
   cluster_tags                             = var.tags
+  # Install DNS after the Fargate profiles exist; no EC2 nodes are available.
+  addons = {
+    coredns = {
+      before_compute = false
+      configuration_values = jsonencode({
+        computeType = "Fargate"
+      })
+    }
+  }
   fargate_profiles = {
     kube_system = {
       name                       = "${var.name}-kube-system"
