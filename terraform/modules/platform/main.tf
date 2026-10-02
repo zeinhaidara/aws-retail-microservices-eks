@@ -28,6 +28,7 @@ module "network" {
 module "eks" {
   source          = "../eks"
   name            = var.name
+  environment     = var.environment
   cluster_version = var.cluster_version
   vpc_id          = module.network.vpc_id
   subnet_ids      = module.network.private_subnets
@@ -42,12 +43,12 @@ module "ecr" {
 }
 
 module "data" {
-  source                     = "../data"
-  name                       = var.name
-  tags                       = var.tags
-  vpc_id                     = module.network.vpc_id
-  private_subnet_ids         = module.network.private_subnets
-  eks_node_security_group_id = module.eks.node_security_group_id
+  source                        = "../data"
+  name                          = var.name
+  tags                          = var.tags
+  vpc_id                        = module.network.vpc_id
+  private_subnet_ids            = module.network.private_subnets
+  eks_cluster_security_group_id = module.eks.cluster_primary_security_group_id
 }
 
 module "messaging" {

@@ -5,7 +5,7 @@ containers, Helm application chart, and app CI/CD live in the separate `app` bra
 
 ## What this repository deploys
 
-- A VPC, public/private subnets, one NAT gateway, and an EKS cluster with managed nodes.
+- A VPC, public/private subnets, one NAT gateway, and an EKS cluster with Fargate profiles.
 - Six immutable ECR repositories: product, inventory, order, notification, trip planner,
   and storefront.
 - A lean data tier per environment: one private, single-AZ MySQL RDS instance, a DynamoDB
@@ -32,9 +32,12 @@ The architecture diagram is a broader target design; see
 [architecture notes](docs/architecture/README.md) for the current boundary.
 
 Each environment keeps MySQL and Valkey in private subnets and allows access only from
-EKS worker nodes. RDS manages its master credential in Secrets Manager; applications
-should use a restricted runtime DB user rather than the master account. Valkey is a
-cache-aside learning component for product reads, never the source of truth for inventory.
+the EKS cluster security group used by Fargate pods. Fargate runs application pods in
+private subnets; Fargate profiles cover CoreDNS and the two ingress/DNS controllers in
+`kube-system`, plus all workloads in `retail-<environment>`. RDS
+manages its master credential in Secrets Manager; applications should use a restricted
+runtime DB user rather than the master account. Valkey is a cache-aside learning component
+for product reads, never the source of truth for inventory.
 The RDS instance and Serverless cache have ongoing costs while provisioned; destroy an
 environment when it is not needed. DynamoDB uses on-demand billing.
 
@@ -149,6 +152,10 @@ The plan job runs without a GitHub Environment so it can finish before the appro
 Put shared deployment configuration in repository variables as listed above. Configure
 the AWS OIDC role trust to allow the `main` branch subject for plans and the `dev`, `test`,
 and `prod` Environment subjects for applies. Keep AWS permissions as narrow as possible.
+The deployment role must also be allowed to create the EKS Fargate service-linked role;
+include `eks-fargate.amazonaws.com` in the `iam:AWSServiceName` condition for
+`iam:CreateServiceLinkedRole`. Its `iam:PassRole` condition for `eks.amazonaws.com`
+covers passing the Fargate pod execution roles to EKS.
 
 The application workflows are separate on the `app` branch:
 

@@ -9,7 +9,8 @@ planned and are not provisioned by the current Terraform.
 
 ## Provisioned now
 
-- VPC with public/private subnets, one NAT gateway, and EKS managed nodes.
+- VPC with public/private subnets, one NAT gateway, and EKS Fargate profiles for
+  `kube-system` and the application namespace.
 - Six ECR repositories for the app services.
 - Private single-AZ RDS MySQL instance with a Secrets Manager-managed master credential,
   DynamoDB inventory table, and private Valkey Serverless cache.
@@ -32,8 +33,10 @@ uses the cluster's internal HTTP service port.
 
 The RDS instance is dev-sized (`db.t3.micro`, single-AZ, 20 GiB gp3) with one day of
 automated backups. Valkey Serverless has 1 GiB storage and 1,000 eCPU/second usage caps.
-Both are private and accept connections only from EKS worker nodes. Expect ongoing charges
-while they exist; these settings reduce capacity, not the charges to zero.
+Both are private and accept connections only from the EKS cluster security group used by
+Fargate Pods. Fargate Pods run in private subnets through the NAT gateway. Expect ongoing
+charges while these resources exist; the configured limits reduce capacity, not charges to
+zero.
 
 The messaging resources are infrastructure foundations only. EventBridge rules/targets,
 queue consumers, SES identity verification and email delivery, and Kubernetes

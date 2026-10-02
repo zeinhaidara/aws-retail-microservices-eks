@@ -1,4 +1,5 @@
 variable "name" { type = string }
+variable "environment" { type = string }
 variable "cluster_version" { type = string }
 variable "vpc_id" { type = string }
 variable "subnet_ids" { type = list(string) }
@@ -19,26 +20,48 @@ module "eks" {
   vpc_id                                   = var.vpc_id
   subnet_ids                               = var.subnet_ids
   enable_cluster_creator_admin_permissions = true
+  create_node_security_group               = false
   tags                                     = var.tags
   cluster_tags                             = var.tags
-  node_security_group_tags                 = var.tags
-  eks_managed_node_groups = {
-    default = {
-      iam_role_name        = "${var.name}-node-group"
-      instance_types       = ["t3.medium"]
-      capacity_type        = "ON_DEMAND"
-      min_size             = 1
-      max_size             = 3
-      desired_size         = 1
-      tags                 = var.tags
-      launch_template_tags = var.tags
-      tag_specifications   = ["instance", "volume", "network-interface"]
+  fargate_profiles = {
+    kube_system = {
+      name                       = "${var.name}-kube-system"
+      iam_role_name              = "${var.name}-fargate-kube-system"
+      iam_role_use_name_prefix   = false
+      iam_role_attach_cni_policy = false
+      subnet_ids                 = var.subnet_ids
+      selectors = [
+        {
+          namespace = "kube-system"
+          labels    = { "k8s-app" = "kube-dns" }
+        },
+        {
+          namespace = "kube-system"
+          labels    = { "app.kubernetes.io/name" = "aws-load-balancer-controller" }
+        },
+        {
+          namespace = "kube-system"
+          labels    = { "app.kubernetes.io/name" = "external-dns" }
+        }
+      ]
+      tags = var.tags
+    }
+    application = {
+      name                       = "${var.name}-application"
+      iam_role_name              = "${var.name}-fargate-application"
+      iam_role_use_name_prefix   = false
+      iam_role_attach_cni_policy = false
+      subnet_ids                 = var.subnet_ids
+      selectors = [{
+        namespace = "retail-${var.environment}"
+      }]
+      tags = var.tags
     }
   }
 }
 
 output "cluster_name" { value = module.eks.cluster_name }
 output "cluster_endpoint" { value = module.eks.cluster_endpoint }
-output "node_security_group_id" { value = module.eks.node_security_group_id }
+output "cluster_primary_security_group_id" { value = module.eks.cluster_primary_security_group_id }
 output "oidc_provider_arn" { value = module.eks.oidc_provider_arn }
 output "cluster_oidc_issuer_url" { value = module.eks.cluster_oidc_issuer_url }
