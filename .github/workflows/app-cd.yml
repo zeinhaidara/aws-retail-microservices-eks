@@ -65,7 +65,23 @@ jobs:
       - id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and publish immutable commit image to both environments
+      - name: Check for existing immutable commit image
+        id: image-check
+        env:
+          REPOSITORY: ${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev/${{ matrix.service }}-service
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          if result=$(aws ecr describe-images --repository-name "$REPOSITORY" --image-ids "imageTag=$IMAGE_TAG" 2>&1); then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$result" == *"ImageNotFoundException"* ]]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' "$result" >&2
+            exit 1
+          fi
+
+      - name: Build and publish immutable commit image
+        if: steps.image-check.outputs.exists != 'true'
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
