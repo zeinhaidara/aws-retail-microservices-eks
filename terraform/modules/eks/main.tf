@@ -24,6 +24,7 @@ module "eks" {
   node_security_group_tags                 = var.tags
   eks_managed_node_groups = {
     default = {
+      iam_role_name        = "${var.name}-node-group"
       instance_types       = ["t3.medium"]
       capacity_type        = "ON_DEMAND"
       min_size             = 1
