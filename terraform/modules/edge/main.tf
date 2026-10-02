@@ -83,6 +83,17 @@ locals {
         Condition = { Null = { "aws:RequestTag/elbv2.k8s.aws/cluster" = "true", "aws:ResourceTag/elbv2.k8s.aws/cluster" = "false" } }
       },
       {
+        # Listener creation includes tags; these resources need their own grant.
+        Effect = "Allow"
+        Action = ["elasticloadbalancing:AddTags", "elasticloadbalancing:RemoveTags"]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:elasticloadbalancing:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:listener/app/*/*/*",
+          "arn:${data.aws_partition.current.partition}:elasticloadbalancing:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:listener/net/*/*/*",
+          "arn:${data.aws_partition.current.partition}:elasticloadbalancing:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:listener-rule/app/*/*/*",
+          "arn:${data.aws_partition.current.partition}:elasticloadbalancing:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:listener-rule/net/*/*/*"
+        ]
+      },
+      {
         Effect = "Allow"
         Action = [
           "elasticloadbalancing:ModifyLoadBalancerAttributes", "elasticloadbalancing:SetIpAddressType",
