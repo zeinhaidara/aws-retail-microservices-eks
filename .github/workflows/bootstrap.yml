@@ -8,26 +8,32 @@ permissions:
   contents: read
 
 jobs:
+  # Create the remote Terraform state bucket and lock table from the main branch.
   bootstrap:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment: dev
 
     steps:
+      # Check out the bootstrap Terraform configuration.
       - uses: actions/checkout@v4
 
+      # Authenticate to AWS using the GitHub OIDC deployment role.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # Install Terraform CLI.
       - uses: hashicorp/setup-terraform@v3
 
+      # Initialize Terraform with the local bootstrap backend.
       - name: Terraform init
         working-directory: terraform/bootstrap
         run: terraform init -input=false
 
+      # Check formatting and validate the bootstrap configuration.
       - name: Terraform format check
         run: terraform fmt -check -recursive terraform/bootstrap
 
@@ -35,6 +41,7 @@ jobs:
         working-directory: terraform/bootstrap
         run: terraform validate
 
+      # Create the plan for the remote state bucket and lock table.
       - name: Terraform plan
         working-directory: terraform/bootstrap
         env:
@@ -43,6 +50,7 @@ jobs:
           TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
         run: terraform plan -input=false -out=tfplan
 
+      # Create the remote Terraform state resources.
       - name: Terraform apply
         working-directory: terraform/bootstrap
         env:
@@ -51,6 +59,7 @@ jobs:
           TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
         run: terraform apply -input=false -auto-approve tfplan
 
+      # Print the bucket name for configuring the infrastructure workflows.
       - name: Show state bucket name
         working-directory: terraform/bootstrap
         run: terraform output state_bucket_name
