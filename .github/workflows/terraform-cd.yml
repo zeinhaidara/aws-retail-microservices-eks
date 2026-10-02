@@ -25,6 +25,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Validate Terraform and publish the exact plan for review.
   plan:
     name: Plan ${{ inputs.action }} (${{ inputs.environment }})
     runs-on: ubuntu-latest
@@ -38,6 +39,7 @@ jobs:
       TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
 
     steps:
+      # Check out the repository and require the existing public DNS zone.
       - uses: actions/checkout@v4
 
       - name: Check shared Route 53 configuration
@@ -49,13 +51,16 @@ jobs:
             exit 1
           fi
 
+      # Assume the deployment role through GitHub OIDC.
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # Install Terraform CLI.
       - uses: hashicorp/setup-terraform@v3
 
+      # Initialize remote state, then check formatting and configuration.
       - name: Terraform init
         working-directory: ${{ env.TF_DIR }}
         run: terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
@@ -67,6 +72,7 @@ jobs:
         working-directory: ${{ env.TF_DIR }}
         run: terraform validate
 
+      # Create and retain the exact plan that the apply job will use.
       - name: Terraform plan
         if: inputs.action != 'destroy'
         working-directory: ${{ env.TF_DIR }}
@@ -77,20 +83,15 @@ jobs:
         working-directory: ${{ env.TF_DIR }}
         run: terraform plan -destroy -input=false -lock-timeout=5m -out=tfplan
 
-      - name: Render plan for review
-        working-directory: ${{ env.TF_DIR }}
-        run: terraform show -no-color tfplan > tfplan.txt
-
       - name: Publish plan artifact
         id: plan-artifact
         uses: actions/upload-artifact@v4
         with:
           name: terraform-plan-${{ inputs.environment }}-${{ inputs.action }}
-          path: |
-            ${{ env.TF_DIR }}/tfplan
-            ${{ env.TF_DIR }}/tfplan.txt
+          path: ${{ env.TF_DIR }}/tfplan
           retention-days: 1
 
+      # Publish a concise link and explain whether this run can change infrastructure.
       - name: Plan review instructions
         run: |
           echo "## Terraform plan ready" >> "$GITHUB_STEP_SUMMARY"
@@ -101,6 +102,7 @@ jobs:
             echo "This run is plan-only and makes no infrastructure changes." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  # Wait for environment approval, then apply the reviewed plan and configure add-ons.
   apply:
     name: Apply reviewed ${{ inputs.action }} plan
     needs: plan
@@ -118,6 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Require runtime API credentials before creating application secrets.
       - name: Check runtime credentials
         if: inputs.action == 'apply'
         env:
@@ -126,11 +129,13 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: bash scripts/sync-runtime-secrets.sh validate
 
+      # Authenticate to AWS using the GitHub OIDC deployment role.
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # Install Terraform CLI, initialize remote state, and restore the approved plan.
       - uses: hashicorp/setup-terraform@v3
 
       - name: Terraform init
@@ -153,6 +158,7 @@ jobs:
         if: inputs.action != 'plan'
         uses: azure/setup-helm@v4
 
+      # Remove cluster add-ons first so Terraform can safely destroy the platform.
       - name: Remove platform add-ons before destroy
         if: inputs.action == 'destroy'
         env:
@@ -162,6 +168,7 @@ jobs:
           TARGET_ENVIRONMENT: ${{ inputs.environment }}
         run: bash scripts/platform-addons.sh destroy
 
+      # Apply the reviewed plan, then install add-ons and sync runtime secrets.
       - name: Apply reviewed plan
         if: inputs.action == 'apply' || inputs.action == 'destroy'
         working-directory: ${{ env.TF_DIR }}
