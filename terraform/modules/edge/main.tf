@@ -132,13 +132,13 @@ resource "aws_sesv2_email_identity" "notifications" {
 }
 
 resource "aws_route53_record" "ses_dkim" {
-  for_each = var.create_ses_identity ? toset(aws_sesv2_email_identity.notifications[0].dkim_signing_attributes[0].tokens) : toset([])
+  count = var.create_ses_identity ? 3 : 0
 
   zone_id = var.route53_zone_id
-  name    = "${each.value}._domainkey.${var.domain_name}"
+  name    = "${aws_sesv2_email_identity.notifications[0].dkim_signing_attributes[0].tokens[count.index]}._domainkey.${var.domain_name}"
   type    = "CNAME"
   ttl     = 300
-  records = ["${each.value}.dkim.amazonses.com"]
+  records = ["${aws_sesv2_email_identity.notifications[0].dkim_signing_attributes[0].tokens[count.index]}.dkim.amazonses.com"]
 }
 
 resource "aws_acm_certificate" "storefront" {
