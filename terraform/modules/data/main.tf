@@ -6,7 +6,8 @@ variable "eks_cluster_security_group_id" { type = string }
 
 resource "aws_security_group" "data" {
   name        = "${var.name}-data"
-  description = "Private access to the database and cache from EKS Fargate pods"
+  # Preserve the existing description: changing it replaces the RDS-attached group.
+  description = "Private access to the dev database and cache from EKS nodes"
   vpc_id      = var.vpc_id
   tags        = var.tags
 }
