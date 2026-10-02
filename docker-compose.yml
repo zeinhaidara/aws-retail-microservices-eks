@@ -1,28 +1,23 @@
 services:
   product-service:
     build:
-      context: services/retail-service
+      context: services/product-service
     image: retail/product-service:dev
-    environment:
-      SERVICE_NAME: product-service
     ports:
       - "8081:8080"
 
   inventory-service:
     build:
-      context: services/retail-service
+      context: services/inventory-service
     image: retail/inventory-service:dev
-    environment:
-      SERVICE_NAME: inventory-service
     ports:
       - "8082:8080"
 
   order-service:
     build:
-      context: services/retail-service
+      context: services/order-service
     image: retail/order-service:dev
     environment:
-      SERVICE_NAME: order-service
       PRODUCT_SERVICE_URL: http://product-service:8080
       INVENTORY_SERVICE_URL: http://inventory-service:8080
     ports:
@@ -30,9 +25,37 @@ services:
 
   notification-service:
     build:
-      context: services/retail-service
+      context: services/notification-service
     image: retail/notification-service:dev
-    environment:
-      SERVICE_NAME: notification-service
     ports:
       - "8084:8080"
+
+  trip-planner:
+    build:
+      context: services/trip-planner
+    image: retail/trip-planner:dev
+    environment:
+      PRODUCT_SERVICE_URL: http://product-service:8080
+      AI_PROVIDER: ${AI_PROVIDER:-cloudflare}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+      GEMINI_TIMEOUT_SECONDS: ${GEMINI_TIMEOUT_SECONDS:-15}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_MODEL: ${CLOUDFLARE_MODEL:-@cf/meta/llama-3.2-3b-instruct}
+      CLOUDFLARE_TIMEOUT_SECONDS: ${CLOUDFLARE_TIMEOUT_SECONDS:-15}
+    ports:
+      - "8086:8080"
+
+  storefront:
+    build:
+      context: services/storefront
+    image: retail/storefront:dev
+    environment:
+      PRODUCT_SERVICE_URL: http://product-service:8080
+      INVENTORY_SERVICE_URL: http://inventory-service:8080
+      ORDER_SERVICE_URL: http://order-service:8080
+      TRIP_PLANNER_URL: http://trip-planner:8080
+    ports:
+      - "8085:8080"
