@@ -2,32 +2,32 @@ variable "name" { type = string }
 variable "tags" { type = map(string) }
 variable "vpc_id" { type = string }
 variable "private_subnet_ids" { type = list(string) }
-variable "eks_node_security_group_id" { type = string }
+variable "eks_cluster_security_group_id" { type = string }
 
 resource "aws_security_group" "data" {
   name        = "${var.name}-data"
-  description = "Private access to the dev database and cache from EKS nodes"
+  description = "Private access to the database and cache from EKS Fargate pods"
   vpc_id      = var.vpc_id
   tags        = var.tags
 }
 
 resource "aws_vpc_security_group_ingress_rule" "mysql_from_eks" {
   security_group_id            = aws_security_group.data.id
-  referenced_security_group_id = var.eks_node_security_group_id
+  referenced_security_group_id = var.eks_cluster_security_group_id
   ip_protocol                  = "tcp"
   from_port                    = 3306
   to_port                      = 3306
-  description                  = "MySQL from EKS nodes"
+  description                  = "MySQL from EKS Fargate pods"
   tags                         = var.tags
 }
 
 resource "aws_vpc_security_group_ingress_rule" "valkey_from_eks" {
   security_group_id            = aws_security_group.data.id
-  referenced_security_group_id = var.eks_node_security_group_id
+  referenced_security_group_id = var.eks_cluster_security_group_id
   ip_protocol                  = "tcp"
   from_port                    = 6379
   to_port                      = 6379
-  description                  = "Valkey from EKS nodes"
+  description                  = "Valkey from EKS Fargate pods"
   tags                         = var.tags
 }
 

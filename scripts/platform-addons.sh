@@ -20,6 +20,12 @@ install_addons() {
   configure_kubectl
   kubectl create namespace "$namespace" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
+  # EKS may label CoreDNS as EC2-only when the cluster was first created with a node group.
+  # Remove that selector so CoreDNS can be rescheduled onto the kube-system Fargate profile.
+  kubectl patch deployment coredns --namespace kube-system --type=merge \
+    --patch '{"spec":{"template":{"metadata":{"annotations":{"eks.amazonaws.com/compute-type":null}}}}}'
+  kubectl rollout status deployment/coredns --namespace kube-system --timeout=5m
+
   helm repo add eks https://aws.github.io/eks-charts --force-update
   helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
     --namespace kube-system --version 1.14.0 --wait --timeout 5m \
