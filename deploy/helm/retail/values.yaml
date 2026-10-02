@@ -7,12 +7,28 @@ replicaCount: 1
 aiProvider: cloudflare
 geminiModel: gemini-3.8-flash
 geminiSecret:
-  name: ""
+  name: gemini-ai-credentials
   key: GEMINI_API_KEY
 cloudflareSecret:
-  name: ""
+  name: cloudflare-ai-credentials
   apiTokenKey: CLOUDFLARE_API_TOKEN
   accountIdKey: CLOUDFLARE_ACCOUNT_ID
+aws:
+  region: us-east-1
+  inventoryTableName: ""
+  mysqlHost: ""
+  mysqlPort: 3306
+  mysqlDatabase: retail
+  mysqlSecretArn: ""
+  valkeyHost: ""
+  valkeyPort: 6379
+  eventBusName: ""
+  orderEventsQueueUrl: ""
+  sesFromAddress: ""
+serviceAccountRoles:
+  inventory: ""
+  order: ""
+  notification: ""
 services:
   - name: product
     imageName: product-service

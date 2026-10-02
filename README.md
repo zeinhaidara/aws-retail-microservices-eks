@@ -33,7 +33,9 @@ Cloud deployments do not use Docker Compose. Build and publish the service image
 | Notification | 8084 | Notification service placeholder |
 | Trip Planner | 8086 | AI itinerary generation and catalog-grounded recommendations |
 
-The current local backend keeps product, inventory, and order data in memory. Restarting the services resets inventory and loses orders. This is a functional local demo, not durable production storage.
+Compose runs a local demo mode with in-memory inventory and orders and no AWS credentials. In EKS, Inventory uses DynamoDB for atomic seat reservations, Order stores confirmed orders and an outbox in MySQL, Product caches catalog reads in Valkey, and EventBridge routes outbox events to SQS for the Notification consumer. Queue delivery is at-least-once; failed notifications retry and eventually reach the configured dead-letter queue.
+
+The storefront checkout accepts an optional email. The notification service sends a fixed SES confirmation when an address and `SES_FROM_ADDRESS` are configured; otherwise it logs that the event was handled without email. Terraform verifies the dev sender domain with Route 53 DKIM records. SES sandbox accounts can send only to verified recipients until production access is granted.
 
 The fictional catalog covers all eight planets, a Moon orbit, and a heliocentric Sun grand tour. Concept package prices range from $99,000 for Earth Orbital Retreat to $3,250,000 for Solar Grand Tour. Durations and suggested months are storytelling inputs for the planner, not real launch windows or mission durations.
 
@@ -41,22 +43,23 @@ The fictional catalog covers all eight planets, a Moon orbit, and a heliocentric
 
 All app changes go through pull requests into the protected `app` branch. `Application CI` has two visible stages: configuration validation, followed by parallel integration smoke tests and security checks (Trivy image/filesystem scans, CodeQL, and dependency review). New commits cancel stale CI runs, and Docker BuildKit caches speed up repeated image builds.
 
-After a merge to `app`, `Application CD` follows distinct release stages: Helm chart preflight, build and publish immutable commit-tagged images, deploy and verify dev, then wait for approval from the protected `prod` GitHub Environment before promoting the same commit to prod. Full Compose/smoke validation runs once in CI rather than being repeated in CD. Release runs are serialized so deployments do not race.
+After a merge to `app`, `Application CD` lints the chart, builds and publishes immutable commit-tagged dev images, reads applied dev outputs from Terraform state, and deploys/verifies dev. This lab intentionally does not deploy test or prod. Full Compose/smoke validation runs once in CI rather than being repeated in CD. Release runs are serialized so deployments do not race.
 
-GitHub repository variables used by CD: `AWS_ROLE_ARN`, `AWS_REGION`, `AWS_ACCOUNT_ID`, `PROJECT_NAME`, and `OWNER`. Create the `dev` and `prod` GitHub Environments; their names must match the Terraform environment names. Add environment variables `CLOUDFLARE_K8S_SECRET_NAME` and `GEMINI_K8S_SECRET_NAME` in both environments. These are names of pre-synced Kubernetes Secrets (not credential values); each must exist in its deployment namespace and contain the configured keys. The expected EKS clusters and ECR repositories follow `<PROJECT_NAME>-<OWNER>-<environment>`.
+GitHub repository variables used by CD: `AWS_ROLE_ARN`, `AWS_REGION`, `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `OWNER`, and `TF_STATE_BUCKET`. Create a protected `dev` GitHub Environment. The app CD workflow reads the dev Terraform outputs so database endpoints, queue/table names, and workload role ARNs do not need to be copied into GitHub variables. The expected EKS cluster and ECR repositories follow `<PROJECT_NAME>-<OWNER>-dev`.
 
-## Current AWS integration gaps
+## AWS integration
 
-Terraform is intentionally maintained on the separate `main` branch. The current infrastructure does not yet provision all services required for a complete cloud application:
+Terraform is maintained on the separate `main` branch. Its dev platform provides:
 
-- Cognito User Pool and app client for customer authentication
-- Relational database for product/order persistence, plus application migrations
-- Application-side DynamoDB access and seed/setup flow for inventory
-- SNS topic and SQS consumer queues/subscriptions for asynchronous order events and notifications
-- AWS Load Balancer Controller/Ingress to provide a public storefront endpoint
-- Runtime IAM permissions and configuration for the services to access those resources
+- DynamoDB inventory table with a least-privilege inventory service role
+- RDS MySQL order/outbox tables created by the Order service on startup; its role can read only the RDS-managed credential secret
+- Valkey catalog cache, accessed privately by Product
+- EventBridge order rule and SQS consumer queue/DLQ, with separate publisher and consumer roles
+- SES dev domain identity and Route 53 DKIM records; the Notification role can send from that identity
+- Helm service accounts annotated with their workload-specific IAM roles
+- HTTPS storefront ingress and external DNS
 
-The Terraform branch currently has an inventory table, one SQS queue with a DLQ, and an EventBridge bus, but the application does not yet publish/consume events from them. These integrations should be added only with their corresponding infrastructure and least-privilege IAM roles, then covered by integration tests.
+`Application CI` runs local Compose smoke tests and does not contact AWS. After Terraform CD has applied dev, app CD reads its outputs and injects resource endpoints and role ARNs into Helm. In SES sandbox mode, verify each test recipient in SES before expecting delivery.
 
 ## Branch separation
 

@@ -2,6 +2,7 @@ import json
 import os
 import threading
 import uuid
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -14,9 +15,94 @@ PRODUCT_SERVICE_URL = os.getenv("PRODUCT_SERVICE_URL", "http://product-service:8
 INVENTORY_SERVICE_URL = os.getenv("INVENTORY_SERVICE_URL", "http://inventory-service:8080")
 
 INVENTORY = {"orbit-001": 8, "orbit-002": 4, "orbit-003": 6, "orbit-004": 5, "orbit-005": 5, "orbit-006": 12, "orbit-007": 3, "orbit-008": 2, "orbit-009": 2, "orbit-010": 1}
+PRODUCT_IDS = tuple(INVENTORY)
+DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME", "")
 ORDERS = {}
 INVENTORY_LOCK = threading.Lock()
 ORDERS_LOCK = threading.Lock()
+
+
+@lru_cache(maxsize=1)
+def inventory_table():
+    if not DYNAMODB_TABLE_NAME:
+        return None
+    import boto3
+
+    return boto3.resource("dynamodb", region_name=os.getenv("AWS_REGION")).Table(DYNAMODB_TABLE_NAME)
+
+
+def seed_inventory():
+    table = inventory_table()
+    if not table:
+        return
+    from boto3.dynamodb.conditions import Attr
+
+    for product_id, available in INVENTORY.items():
+        try:
+            table.put_item(
+                Item={"sku": product_id, "available": available},
+                ConditionExpression=Attr("sku").not_exists(),
+            )
+        except table.meta.client.exceptions.ConditionalCheckFailedException:
+            pass
+
+
+def get_available(product_id):
+    table = inventory_table()
+    if table:
+        response = table.meta.client.get_item(
+            TableName=DYNAMODB_TABLE_NAME,
+            Key={"sku": product_id},
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        return item.get("available") if item else None
+    with INVENTORY_LOCK:
+        return INVENTORY.get(product_id)
+
+
+def inventory_items():
+    return [
+        {"productId": product_id, "available": get_available(product_id)}
+        for product_id in PRODUCT_IDS
+    ]
+
+
+def update_inventory(items, release=False):
+    table = inventory_table()
+    if table:
+        operations = []
+        for item in items:
+            quantity = item["quantity"]
+            if release:
+                operations.append({"Update": {
+                    "TableName": DYNAMODB_TABLE_NAME,
+                    "Key": {"sku": item["productId"]},
+                    "UpdateExpression": "SET available = available + :quantity",
+                    "ConditionExpression": "attribute_exists(sku)",
+                    "ExpressionAttributeValues": {":quantity": quantity},
+                }})
+            else:
+                operations.append({"Update": {
+                    "TableName": DYNAMODB_TABLE_NAME,
+                    "Key": {"sku": item["productId"]},
+                    "UpdateExpression": "SET available = available - :quantity",
+                    "ConditionExpression": "available >= :quantity",
+                    "ExpressionAttributeValues": {":quantity": quantity},
+                }})
+        try:
+            table.meta.client.transact_write_items(TransactItems=operations)
+        except table.meta.client.exceptions.TransactionCanceledException:
+            return False
+        return True
+
+    with INVENTORY_LOCK:
+        if not release and any(INVENTORY.get(item["productId"], -1) < item["quantity"] for item in items):
+            return False
+        for item in items:
+            product_id, quantity = item["productId"], item["quantity"]
+            INVENTORY[product_id] = INVENTORY.get(product_id, 0) + (quantity if release else -quantity)
+    return True
 
 
 def json_request(url, method="GET", body=None):
@@ -58,16 +144,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if SERVICE == "inventory-service" and path.startswith("/inventory/"):
             product_id = path.split("/")[-1]
-            if product_id not in INVENTORY:
+            available = get_available(product_id)
+            if available is None:
                 return self._write(404, {"error": "inventory not found"})
-            return self._write(200, {"productId": product_id, "available": INVENTORY[product_id]})
+            return self._write(200, {"productId": product_id, "available": available})
         if SERVICE == "inventory-service" and path == "/inventory":
-            with INVENTORY_LOCK:
-                items = [
-                    {"productId": product_id, "available": available}
-                    for product_id, available in INVENTORY.items()
-                ]
-            return self._write(200, {"items": items})
+            return self._write(200, {"items": inventory_items()})
 
         if SERVICE == "order-service" and path.startswith("/orders/"):
             with ORDERS_LOCK:
@@ -99,14 +181,26 @@ class Handler(BaseHTTPRequestHandler):
                 if product_id not in INVENTORY or type(quantity) is not int or quantity < 1:
                     return self._write(400, {"error": "invalid inventory item"})
                 requested[product_id] = requested.get(product_id, 0) + quantity
-            with INVENTORY_LOCK:
-                for product_id, quantity in requested.items():
-                    if INVENTORY[product_id] < quantity:
-                        return self._write(409, {"error": "insufficient inventory", "productId": product_id})
-                for product_id, quantity in requested.items():
-                    INVENTORY[product_id] -= quantity
             reserved = [{"productId": product_id, "quantity": quantity} for product_id, quantity in requested.items()]
+            if not update_inventory(reserved):
+                return self._write(409, {"error": "insufficient inventory"})
             return self._write(201, {"status": "RESERVED", "items": reserved, "event": "InventoryReserved"})
+
+        if SERVICE == "inventory-service" and path == "/inventory/releases":
+            if not isinstance(body, dict) or not isinstance(body.get("items"), list) or not body["items"]:
+                return self._write(400, {"error": "items are required"})
+            items = body["items"]
+            if any(
+                not isinstance(item, dict)
+                or item.get("productId") not in INVENTORY
+                or type(item.get("quantity")) is not int
+                or item["quantity"] < 1
+                for item in items
+            ):
+                return self._write(400, {"error": "invalid inventory item"})
+            if not update_inventory(items, release=True):
+                return self._write(409, {"error": "inventory release failed"})
+            return self._write(200, {"status": "RELEASED", "items": items})
 
         if SERVICE == "order-service" and path == "/orders":
             if not isinstance(body, dict):
@@ -165,5 +259,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    seed_inventory()
     print(f"Starting {SERVICE} on port {PORT}")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

@@ -70,9 +70,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           push: true
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev/${{ matrix.service }}-service:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-prod/${{ matrix.service }}-service:${{ github.sha }}
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev/${{ matrix.service }}-service:${{ github.sha }}
           cache-from: type=gha,scope=release-${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=release-${{ matrix.service }}
 
@@ -81,9 +79,6 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     environment: dev
-    env:
-      CLOUDFLARE_K8S_SECRET_NAME: ${{ vars.CLOUDFLARE_K8S_SECRET_NAME }}
-      GEMINI_K8S_SECRET_NAME: ${{ vars.GEMINI_K8S_SECRET_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -92,17 +87,33 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      - name: Checkout infrastructure configuration
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: infrastructure
+
+      - uses: hashicorp/setup-terraform@v3
+
       - uses: azure/setup-helm@v4
 
-      - name: Verify runtime AI Secret references
+      - name: Read applied infrastructure outputs
+        id: infra
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
         run: |
-          if [ -z "$CLOUDFLARE_K8S_SECRET_NAME" ] || [ -z "$GEMINI_K8S_SECRET_NAME" ]; then
-            echo "::error::Set CLOUDFLARE_K8S_SECRET_NAME and GEMINI_K8S_SECRET_NAME in the dev GitHub Environment variables."
+          if [ -z "$TF_STATE_BUCKET" ]; then
+            echo "::error::Set TF_STATE_BUCKET as a repository variable."
             exit 1
           fi
+          terraform -chdir=infrastructure/terraform/environments/dev init -input=false -backend-config="bucket=$TF_STATE_BUCKET"
+          outputs="$(terraform -chdir=infrastructure/terraform/environments/dev output -json)"
+          for key in cluster_name inventory_table_name mysql_endpoint mysql_port mysql_database_name mysql_master_secret_arn valkey_endpoint valkey_port order_events_queue_url event_bus_name inventory_role_arn order_role_arn notification_role_arn ses_from_address; do
+            printf '%s=%s\n' "$key" "$(jq -r --arg key "$key" '.[$key].value' <<< "$outputs")" >> "$GITHUB_OUTPUT"
+          done
 
       - name: Configure kubectl
-        run: aws eks update-kubeconfig --name "${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev" --region "${{ vars.AWS_REGION }}"
+        run: aws eks update-kubeconfig --name "${{ steps.infra.outputs.cluster_name }}" --region "${{ vars.AWS_REGION }}"
 
       - name: Deploy Helm release
         run: |
@@ -114,54 +125,21 @@ jobs:
             --set environment=dev \
             --set imageRegistry="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com" \
             --set imageTag="${{ github.sha }}" \
-            --set-string cloudflareSecret.name="$CLOUDFLARE_K8S_SECRET_NAME" \
-            --set-string geminiSecret.name="$GEMINI_K8S_SECRET_NAME" \
+            --set-string aws.region="${{ vars.AWS_REGION }}" \
+            --set-string aws.inventoryTableName="${{ steps.infra.outputs.inventory_table_name }}" \
+            --set-string aws.mysqlHost="${{ steps.infra.outputs.mysql_endpoint }}" \
+            --set-string aws.mysqlPort="${{ steps.infra.outputs.mysql_port }}" \
+            --set-string aws.mysqlDatabase="${{ steps.infra.outputs.mysql_database_name }}" \
+            --set-string aws.mysqlSecretArn="${{ steps.infra.outputs.mysql_master_secret_arn }}" \
+            --set-string aws.valkeyHost="${{ steps.infra.outputs.valkey_endpoint }}" \
+            --set-string aws.valkeyPort="${{ steps.infra.outputs.valkey_port }}" \
+            --set-string aws.orderEventsQueueUrl="${{ steps.infra.outputs.order_events_queue_url }}" \
+            --set-string aws.eventBusName="${{ steps.infra.outputs.event_bus_name }}" \
+            --set-string aws.sesFromAddress="${{ steps.infra.outputs.ses_from_address }}" \
+            --set-string serviceAccountRoles.inventory="${{ steps.infra.outputs.inventory_role_arn }}" \
+            --set-string serviceAccountRoles.order="${{ steps.infra.outputs.order_role_arn }}" \
+            --set-string serviceAccountRoles.notification="${{ steps.infra.outputs.notification_role_arn }}" \
             --wait --timeout 10m
 
       - name: Verify dev rollout
         run: kubectl rollout status deployment -l app.kubernetes.io/part-of=retail --namespace retail-dev --timeout=10m
-
-  deploy-prod:
-    name: "Stage 4 — Promote approved commit to prod"
-    needs: deploy-dev
-    runs-on: ubuntu-latest
-    environment: prod
-    env:
-      CLOUDFLARE_K8S_SECRET_NAME: ${{ vars.CLOUDFLARE_K8S_SECRET_NAME }}
-      GEMINI_K8S_SECRET_NAME: ${{ vars.GEMINI_K8S_SECRET_NAME }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - uses: azure/setup-helm@v4
-
-      - name: Verify runtime AI Secret references
-        run: |
-          if [ -z "$CLOUDFLARE_K8S_SECRET_NAME" ] || [ -z "$GEMINI_K8S_SECRET_NAME" ]; then
-            echo "::error::Set CLOUDFLARE_K8S_SECRET_NAME and GEMINI_K8S_SECRET_NAME in the prod GitHub Environment variables."
-            exit 1
-          fi
-
-      - name: Configure kubectl
-        run: aws eks update-kubeconfig --name "${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-prod" --region "${{ vars.AWS_REGION }}"
-
-      - name: Deploy approved commit
-        run: |
-          helm upgrade --install retail deploy/helm/retail \
-            --namespace retail-prod \
-            --create-namespace \
-            --set projectName="${{ vars.PROJECT_NAME }}" \
-            --set owner="${{ vars.OWNER }}" \
-            --set environment=prod \
-            --set imageRegistry="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com" \
-            --set imageTag="${{ github.sha }}" \
-            --set-string cloudflareSecret.name="$CLOUDFLARE_K8S_SECRET_NAME" \
-            --set-string geminiSecret.name="$GEMINI_K8S_SECRET_NAME" \
-            --wait --timeout 10m
-
-      - name: Verify prod rollout
-        run: kubectl rollout status deployment -l app.kubernetes.io/part-of=retail --namespace retail-prod --timeout=10m

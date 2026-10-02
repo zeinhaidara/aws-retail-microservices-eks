@@ -2,6 +2,7 @@ import json
 import os
 import threading
 import uuid
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -28,6 +29,61 @@ PRODUCTS = {
 ORDERS = {}
 INVENTORY_LOCK = threading.Lock()
 ORDERS_LOCK = threading.Lock()
+VALKEY_HOST = os.getenv("VALKEY_HOST", "")
+VALKEY_PORT = int(os.getenv("VALKEY_PORT", "6379"))
+VALKEY_TLS = os.getenv("VALKEY_TLS", "true").lower() == "true"
+
+
+@lru_cache(maxsize=1)
+def cache_client():
+    if not VALKEY_HOST:
+        return None
+    import redis
+
+    return redis.Redis(
+        host=VALKEY_HOST,
+        port=VALKEY_PORT,
+        ssl=VALKEY_TLS,
+        decode_responses=True,
+        socket_connect_timeout=1,
+        socket_timeout=1,
+    )
+
+
+def cached_product(product_id):
+    client = cache_client()
+    if client:
+        try:
+            cached = client.get(f"product:{product_id}")
+            if cached:
+                return json.loads(cached)
+        except Exception as error:
+            print(f"Valkey read failed; using catalog source: {error}")
+    product = PRODUCTS.get(product_id)
+    if product and client:
+        try:
+            client.setex(f"product:{product_id}", 60, json.dumps(product))
+        except Exception as error:
+            print(f"Valkey write failed; using catalog source: {error}")
+    return product
+
+
+def cached_catalog():
+    client = cache_client()
+    if client:
+        try:
+            cached = client.get("product:catalog")
+            if cached:
+                return json.loads(cached)
+        except Exception as error:
+            print(f"Valkey read failed; using catalog source: {error}")
+    items = list(PRODUCTS.values())
+    if client:
+        try:
+            client.setex("product:catalog", 60, json.dumps(items))
+        except Exception as error:
+            print(f"Valkey write failed; using catalog source: {error}")
+    return items
 
 
 def json_request(url, method="GET", body=None):
@@ -62,9 +118,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._write(200, {"status": "ready", "service": SERVICE})
 
         if SERVICE == "product-service" and path == "/products":
-            return self._write(200, {"items": list(PRODUCTS.values())})
+            return self._write(200, {"items": cached_catalog()})
         if SERVICE == "product-service" and path.startswith("/products/"):
-            product = PRODUCTS.get(path.split("/")[-1])
+            product = cached_product(path.split("/")[-1])
             return self._write(200, product) if product else self._write(404, {"error": "product not found"})
 
         if SERVICE == "inventory-service" and path.startswith("/inventory/"):
