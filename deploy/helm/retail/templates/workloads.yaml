@@ -57,6 +57,8 @@ spec:
               value: {{ $.Values.aws.region | quote }}
             {{- end }}
             {{- if eq .name "order" }}
+            - name: NOTIFICATION_SERVICE_URL
+              value: http://{{ $.Release.Name }}-notification:8084
             - name: MYSQL_HOST
               value: {{ $.Values.aws.mysqlHost | quote }}
             - name: MYSQL_PORT
@@ -87,6 +89,10 @@ spec:
               value: {{ $.Values.aws.sesFromAddress | quote }}
             - name: AWS_REGION
               value: {{ $.Values.aws.region | quote }}
+            {{- end }}
+            {{- if eq .name "storefront" }}
+            - name: NOTIFICATION_SERVICE_URL
+              value: http://{{ $.Release.Name }}-notification:8084
             {{- end }}
             {{- if eq .name "trip-planner" }}
             - name: AI_PROVIDER

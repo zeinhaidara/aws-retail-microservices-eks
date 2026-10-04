@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 PRODUCT_SERVICE_URL = os.getenv("PRODUCT_SERVICE_URL", "http://product-service:8080")
 INVENTORY_SERVICE_URL = os.getenv("INVENTORY_SERVICE_URL", "http://inventory-service:8080")
 ORDER_SERVICE_URL = os.getenv("ORDER_SERVICE_URL", "http://order-service:8080")
+NOTIFICATION_SERVICE_URL = os.getenv("NOTIFICATION_SERVICE_URL", "http://notification-service:8080")
 TRIP_PLANNER_URL = os.getenv("TRIP_PLANNER_URL", "http://trip-planner:8080")
 ASSETS = {"backpack.jpg", "bottle.jpg", "hoodie.jpg", "orbital-hero-v2.png"}
 
@@ -49,6 +50,8 @@ class Handler(BaseHTTPRequestHandler):
     def _read_json(self):
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if not 0 <= length <= 16384:
+                return None
             return json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             return None
@@ -78,13 +81,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/api/orders", "/api/trip-plan", "/api/chat"):
+        if path not in ("/api/orders", "/api/trip-plan", "/api/chat", "/api/email/verify", "/api/email/status"):
             return self._respond(404, {"error": "not found"})
         body = self._read_json()
         if not isinstance(body, dict):
             return self._respond(400, {"error": "invalid JSON body"})
         if path == "/api/orders":
             return self._proxy(ORDER_SERVICE_URL, "/orders", method="POST", body=body)
+        if path.startswith("/api/email/"):
+            return self._proxy(NOTIFICATION_SERVICE_URL, path.removeprefix("/api"), method="POST", body=body)
         return self._proxy(TRIP_PLANNER_URL, "/chat" if path == "/api/chat" else "/trip-plan", method="POST", body=body)
 
     def log_message(self, fmt, *args):
