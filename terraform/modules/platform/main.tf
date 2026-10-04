@@ -130,6 +130,17 @@ module "notification_role" {
         Effect   = "Allow"
         Action   = ["ses:SendEmail"]
         Resource = [module.edge.ses_identity_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["ses:GetEmailIdentity"]
+        Resource = ["${split("/", module.edge.ses_identity_arn)[0]}/*"]
+      },
+      {
+        # SES VerifyEmailIdentity does not support resource-level permissions.
+        Effect   = "Allow"
+        Action   = ["ses:VerifyEmailIdentity"]
+        Resource = ["*"]
       }
     ]
   }
