@@ -56,7 +56,8 @@ def get_available(product_id):
             ConsistentRead=True,
         )
         item = response.get("Item")
-        return item.get("available") if item else None
+        # DynamoDB numbers deserialize as Decimal, which json.dumps cannot encode.
+        return int(item["available"]) if item else None
     with INVENTORY_LOCK:
         return INVENTORY.get(product_id)
 
