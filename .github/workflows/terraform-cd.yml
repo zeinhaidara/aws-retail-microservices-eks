@@ -9,6 +9,11 @@ on:
         type: choice
         options: [dev, test, prod]
         default: dev
+      demo_notification_email:
+        description: "Dev SES recipient override (defaults to DEMO_NOTIFICATION_EMAIL repository variable)"
+        required: false
+        type: string
+        default: ""
       action:
         description: Terraform action
         required: true
@@ -37,6 +42,7 @@ jobs:
       TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
       TF_VAR_environment: ${{ inputs.environment }}
       TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
+      TF_VAR_demo_notification_email: ${{ inputs.demo_notification_email || vars.DEMO_NOTIFICATION_EMAIL }}
 
     steps:
       # Check out the repository and require the existing public DNS zone.
@@ -116,6 +122,7 @@ jobs:
       TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
       TF_VAR_environment: ${{ inputs.environment }}
       TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
+      TF_VAR_demo_notification_email: ${{ inputs.demo_notification_email || vars.DEMO_NOTIFICATION_EMAIL }}
 
     steps:
       - uses: actions/checkout@v4
@@ -173,6 +180,19 @@ jobs:
         if: inputs.action == 'apply' || inputs.action == 'destroy'
         working-directory: ${{ env.TF_DIR }}
         run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
+
+      - name: Check SES notification readiness
+        if: inputs.action == 'apply' && inputs.environment == 'dev'
+        env:
+          DEMO_EMAIL: ${{ inputs.demo_notification_email || vars.DEMO_NOTIFICATION_EMAIL }}
+        run: |
+          aws sesv2 get-account --query '{ProductionAccess:ProductionAccessEnabled,SendingEnabled:SendingEnabled}'
+          sender="$(terraform -chdir="$TF_DIR" output -raw storefront_domain_name)"
+          aws sesv2 get-email-identity --email-identity "$sender" --query '{Verified:VerifiedForSendingStatus,Dkim:DkimAttributes.Status}'
+          if [[ -n "$DEMO_EMAIL" ]]; then
+            aws sesv2 get-email-identity --email-identity "$DEMO_EMAIL" --query '{Verified:VerifiedForSendingStatus}'
+            echo "Confirm the SES verification link in the demo recipient inbox before placing a new order." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Install platform add-ons
         if: inputs.action == 'apply'
