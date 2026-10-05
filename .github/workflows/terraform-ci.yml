@@ -63,3 +63,21 @@ jobs:
           scanners: secret
           severity: HIGH,CRITICAL
           exit-code: "1"
+
+  observability:
+    name: Validate Fargate monitoring chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Validate chart and scripts
+        run: |
+          helm lint deploy/helm/observability
+          helm template monitoring deploy/helm/observability --namespace retail-dev > /tmp/monitoring.yaml
+          bash -n scripts/platform-addons.sh scripts/sync-runtime-secrets.sh
+      - name: Check Prometheus configuration
+        run: |
+          helm template monitoring deploy/helm/observability --namespace retail-dev --show-only templates/config.yaml > /tmp/config.yaml
+          python3 -m pip install 'PyYAML>=6,<7'
+          python3 -c "import yaml; docs=list(yaml.safe_load_all(open('/tmp/config.yaml'))); open('/tmp/prometheus.yml','w').write(docs[0]['data']['prometheus.yml'])"
+          docker run --rm --entrypoint promtool -v /tmp/prometheus.yml:/etc/prometheus/prometheus.yml:ro prom/prometheus:v3.15.0 check config /etc/prometheus/prometheus.yml

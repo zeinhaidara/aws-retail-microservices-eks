@@ -1,0 +1,7 @@
+prometheus:
+  image: prom/prometheus:v3.15.0
+  retention: 24h
+grafana:
+  image: grafana/grafana:13.2.3
+  rootUrl: https://cloudbatch818.click/grafana/
+  adminSecret: grafana-admin

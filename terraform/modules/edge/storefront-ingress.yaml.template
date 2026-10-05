@@ -12,6 +12,7 @@ metadata:
     alb.ingress.kubernetes.io/certificate-arn: __CERTIFICATE_ARN__
     alb.ingress.kubernetes.io/healthcheck-path: /health
     alb.ingress.kubernetes.io/success-codes: "200"
+    alb.ingress.kubernetes.io/actions.block-metrics: '{"type":"fixed-response","fixedResponseConfig":{"contentType":"text/plain","statusCode":"404","messageBody":"Not found"}}'
     alb.ingress.kubernetes.io/tags: Owner=zein,Project=Cloudbatch818,Environment=__ENVIRONMENT__,ManagedBy=terraform
     external-dns.alpha.kubernetes.io/hostname: __DOMAIN_NAME__
 spec:
@@ -20,6 +21,20 @@ spec:
     - host: __DOMAIN_NAME__
       http:
         paths:
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: block-metrics
+                port:
+                  name: use-annotation
+          - path: /grafana
+            pathType: Prefix
+            backend:
+              service:
+                name: monitoring-grafana
+                port:
+                  number: 3000
           - path: /
             pathType: Prefix
             backend:

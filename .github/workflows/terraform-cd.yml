@@ -127,7 +127,13 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: bash scripts/sync-runtime-secrets.sh validate
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: |
+          bash scripts/sync-runtime-secrets.sh validate
+          if [[ ${#GRAFANA_ADMIN_PASSWORD} -lt 16 ]]; then
+            echo "::error::Set GRAFANA_ADMIN_PASSWORD in the protected Environment (at least 16 characters)."
+            exit 1
+          fi
 
       # Authenticate to AWS using the GitHub OIDC deployment role.
       - uses: aws-actions/configure-aws-credentials@v4
@@ -181,6 +187,7 @@ jobs:
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           OWNER: ${{ vars.OWNER }}
           TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         run: bash scripts/platform-addons.sh install
 
       - name: Sync runtime credentials

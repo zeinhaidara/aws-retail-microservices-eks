@@ -42,6 +42,18 @@ install_addons() {
 
   kubectl rollout status deployment/aws-load-balancer-controller -n kube-system --timeout=180s
   kubectl rollout status deployment/external-dns -n kube-system --timeout=180s
+  # Credentials stay in a Kubernetes Secret, never Terraform state or Helm values.
+  if ! kubectl get secret grafana-admin --namespace "$namespace" >/dev/null 2>&1; then
+    if [[ ${#GRAFANA_ADMIN_PASSWORD} -lt 16 ]]; then
+      echo "::error::Set the protected environment GRAFANA_ADMIN_PASSWORD secret (at least 16 characters)."
+      exit 1
+    fi
+    printf '%s' "$GRAFANA_ADMIN_PASSWORD" | kubectl create secret generic grafana-admin \
+      --namespace "$namespace" --from-file=admin-password=/dev/stdin >/dev/null
+  fi
+  helm upgrade --install monitoring deploy/helm/observability \
+    --namespace "$namespace" --set-string grafana.rootUrl="https://$domain_name/grafana/" \
+    --wait --timeout 10m
   sed -e "s|__DOMAIN_NAME__|$domain_name|g" \
       -e "s|__CERTIFICATE_ARN__|$certificate_arn|g" \
       -e "s|__NAMESPACE__|$namespace|g" \
@@ -58,6 +70,9 @@ destroy_addons() {
   if kubectl get namespace "$namespace" >/dev/null 2>&1; then
     kubectl delete ingress storefront --namespace "$namespace" --ignore-not-found --wait=true --timeout=5m
     sleep 40
+    if helm status monitoring --namespace "$namespace" >/dev/null 2>&1; then
+      helm uninstall monitoring --namespace "$namespace" --wait
+    fi
   fi
 
   for release in external-dns aws-load-balancer-controller; do
