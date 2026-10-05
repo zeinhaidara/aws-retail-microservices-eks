@@ -3,18 +3,28 @@ set -uo pipefail
 
 # Read-only diagnostics. Do not receive, delete, purge, or redrive queue messages.
 failed=0
+filtered_logs() {
+  kubectl logs -n retail-dev -l "app.kubernetes.io/name=$1" \
+    --all-containers=true --prefix=true --timestamps=true --since=24h --tail=-1 |
+    awk '
+      /"GET \/(health|ready) HTTP\// { next }
+      { lines[count % 200] = $0; count++ }
+      END {
+        if (count == 0) print "No non-health-check log entries retained in this window."
+        start = count > 200 ? count - 200 : 0
+        for (i = start; i < count; i++) print lines[i % 200]
+      }'
+}
 echo '::group::Notification pods'
 kubectl get pods -n retail-dev -l app.kubernetes.io/name=notification -o wide || failed=1
 echo '::endgroup::'
 
-echo '::group::Notification worker logs (last 24 hours, up to 200 lines per pod)'
-kubectl logs -n retail-dev -l app.kubernetes.io/name=notification \
-  --all-containers=true --prefix=true --timestamps=true --since=24h --tail=200 || failed=1
+echo '::group::Notification worker logs (last 24 hours, health checks excluded)'
+filtered_logs notification || failed=1
 echo '::endgroup::'
 
-echo '::group::Order service logs (last 24 hours, up to 100 lines per pod)'
-kubectl logs -n retail-dev -l app.kubernetes.io/name=order \
-  --all-containers=true --prefix=true --timestamps=true --since=24h --tail=100 || failed=1
+echo '::group::Order service logs (last 24 hours, health checks excluded)'
+filtered_logs order || failed=1
 echo '::endgroup::'
 
 echo '::group::SES sender verification and account status'
