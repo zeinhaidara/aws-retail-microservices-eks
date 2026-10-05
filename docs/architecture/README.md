@@ -102,7 +102,7 @@ sequenceDiagram
   alt Accepted or order without email
     N->>Q: DeleteMessage
   else Failure
-    Note over N,Q: Retain message; retry then DLQ
+    Note over N,Q: After repeated failures, SQS moves the retained message to the DLQ
   end
 ```
 
