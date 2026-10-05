@@ -37,7 +37,8 @@ class VerificationTests(unittest.TestCase):
             client.assert_not_called()
 
     def test_invalid_addresses(self):
-        for value in (None, "bad", "a@b", "a\n@example.com", {}, "x" * 255):
+        for value in (None, "bad", "a@b", "a\n@example.com", {}, "x" * 255,
+                      "@example.com", "a@@example.com", "a@example..com", "a@example.", "!" * 250):
             with self.assertRaises(ValueError):
                 notification.request_verification(value)
 

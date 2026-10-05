@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import secrets
 import threading
 import time
@@ -31,7 +30,11 @@ def normalize_email(email):
     if not isinstance(email, str) or len(email) > 254:
         raise ValueError("Enter a valid email address.")
     email = email.strip().lower()
-    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+    if email.count("@") != 1 or any(character.isspace() for character in email):
+        raise ValueError("Enter a valid email address.")
+    local, domain = email.split("@")
+    labels = domain.split(".")
+    if not local or len(labels) < 2 or any(not label for label in labels):
         raise ValueError("Enter a valid email address.")
     return email
 
