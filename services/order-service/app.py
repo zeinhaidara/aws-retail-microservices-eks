@@ -170,23 +170,23 @@ def publish_pending_events():
         return
 
     client = events_client()
-    for event in events:
+    for outbox_event in events:
         response = client.put_events(Entries=[{
             "EventBusName": EVENT_BUS_NAME,
             "Source": "cloudbatch818.retail.orders",
-            "DetailType": event["event_type"],
-            "Detail": event["detail"] if isinstance(event["detail"], str) else json.dumps(event["detail"]),
+            "DetailType": outbox_event["event_type"],
+            "Detail": outbox_event["detail"] if isinstance(outbox_event["detail"], str) else json.dumps(outbox_event["detail"]),
         }])
         if response.get("FailedEntryCount", 0):
             raise RuntimeError("EventBridge rejected an order event")
-        event("outbox_published")
         connection = database_connection()
         try:
             with connection.cursor() as cursor:
-                cursor.execute("UPDATE order_outbox SET published_at = CURRENT_TIMESTAMP WHERE event_id = %s", (event["event_id"],))
+                cursor.execute("UPDATE order_outbox SET published_at = CURRENT_TIMESTAMP WHERE event_id = %s", (outbox_event["event_id"],))
             connection.commit()
         finally:
             connection.close()
+        event("outbox_published")
 
 
 def outbox_worker():
