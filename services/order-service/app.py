@@ -15,6 +15,7 @@ SERVICE = "order-service"
 PORT = int(os.getenv("PORT", "8080"))
 PRODUCT_SERVICE_URL = os.getenv("PRODUCT_SERVICE_URL", "http://product-service:8080")
 INVENTORY_SERVICE_URL = os.getenv("INVENTORY_SERVICE_URL", "http://inventory-service:8080")
+NOTIFICATION_SERVICE_URL = os.getenv("NOTIFICATION_SERVICE_URL", "http://notification-service:8080")
 MYSQL_HOST = os.getenv("MYSQL_HOST", "")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "retail")
@@ -234,6 +235,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._write(400, {"error": "email must be a valid email address"})
 
         try:
+            if email:
+                email = email.strip().lower()
+                _, verification = json_request(
+                    f"{NOTIFICATION_SERVICE_URL}/email/status", method="POST",
+                    body={"email": email, "verificationToken": body.get("verificationToken")},
+                )
+                if not verification.get("verified"):
+                    return self._write(409, {"error": "Verify your email before reserving with email updates."})
             requested = {}
             for item in body["items"]:
                 if not isinstance(item, dict):

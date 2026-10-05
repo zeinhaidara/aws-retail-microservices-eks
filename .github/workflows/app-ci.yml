@@ -41,6 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Test email verification
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+
       - name: Validate Docker Compose
         run: docker compose config --quiet
 
