@@ -90,8 +90,7 @@ main
 │   └── sync-runtime-secrets.sh        Provider credentials into AWS/Kubernetes Secrets
 └── docs/
     ├── architecture/README.md         Current topology and sequence diagrams
-    ├── observability.md               Dashboard, metrics and deployment verification
-    └── presentation/                 Executive talk track, Q&A and presentation assets
+    └── observability.md               Dashboard, metrics and deployment verification
 
 app
 ├── .github/workflows/{app-ci,app-cd}.yml
@@ -269,4 +268,5 @@ SNS fanout remains an outstanding project acceptance item.
 
 Before presenting: finish the two deployments, verify six scrape targets, confirm spare
 inventory and one email, prepare a recorded/screenshot fallback and rehearse the
-[10-minute executive talk track](docs/presentation/README.md).
+ten-minute presentation. Keep slide decks, presenter notes and private demo evidence
+outside this repository.
