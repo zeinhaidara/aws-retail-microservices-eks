@@ -1,0 +1,39 @@
+name: Notification Diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      order_id:
+        description: "Optional existing order UUID to test lookup and recipient status (no email is sent)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: notification-diagnostics-dev
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    name: Inspect existing dev notification service
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Configure existing cluster access
+        env:
+          CLUSTER_NAME: ${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev
+        run: aws eks update-kubeconfig --name "$CLUSTER_NAME"
+      - name: Read logs, configuration, SES status, and queues
+        env:
+          ORDER_ID: ${{ inputs.order_id }}
+        run: bash scripts/diagnose-notifications.sh
