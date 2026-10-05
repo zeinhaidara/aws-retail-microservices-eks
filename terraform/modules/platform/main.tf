@@ -127,9 +127,13 @@ module "notification_role" {
         Resource = [module.messaging.order_events_queue_arn]
       },
       {
-        Effect   = "Allow"
-        Action   = ["ses:SendEmail"]
-        Resource = [module.edge.ses_identity_arn]
+        Effect = "Allow"
+        Action = ["ses:SendEmail"]
+        # SES authorizes both sender and verified recipient identities.
+        Resource = ["${split("/", module.edge.ses_identity_arn)[0]}/*"]
+        Condition = {
+          StringEquals = { "ses:FromAddress" = "orders@${var.domain_name}" }
+        }
       },
       {
         Effect   = "Allow"

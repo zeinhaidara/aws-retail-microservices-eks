@@ -1,207 +1,272 @@
-# Retail Microservices Infrastructure
+# Orbital Expeditions on AWS EKS
 
-Terraform for the AWS platform behind the retail microservices demo. Application source,
-containers, Helm application chart, and app CI/CD live in the separate `app` branch.
+A working, fictional space-travel storefront that demonstrates an AWS application from
+customer request through inventory reservation, durable order storage and email delivery.
+The business scenario is a demo. Package prices are fictional, not revenue or real bookings.
 
-## What this repository deploys
+Development deployment: **https://cloudbatch818.click** in **us-east-2**.
+Terraform's S3 backend remains in **us-east-1**. Those regions serve different purposes.
 
-- A VPC, public/private subnets, one NAT gateway, and an EKS cluster with Fargate profiles.
-- Six immutable ECR repositories: product, inventory, order, notification, trip planner,
-  and storefront.
-- A lean data tier per environment: one private, single-AZ MySQL RDS instance, a DynamoDB
-  inventory table, and a private Valkey Serverless cache.
-- An order-events SQS queue with a dead-letter queue and an EventBridge event bus.
-- Service-scoped Secrets Manager entries and workload IAM roles.
-- An ACM certificate and IAM roles for the ingress and DNS controllers.
-- On Terraform `apply`, the workflow installs the AWS Load Balancer Controller and
-  ExternalDNS, then applies the storefront Ingress.
+## What works and what still needs deployment
 
-Public traffic follows this path:
+The storefront, reservation flow, recipient verification and an SES confirmation reaching
+Gmail have been demonstrated. This change adds Fargate-compatible Prometheus/Grafana and
+application metrics. Monitoring is **not live until both review branches merge and deploy**.
+
+| Component | Responsibility | Implementation |
+| --- | --- | --- |
+| Storefront | Page, cart and same-origin API proxy | Python HTTP server, HTML/CSS/JavaScript |
+| Product | Authoritative concept catalog and prices | In-code catalog, Valkey cache-aside reads |
+| Inventory | Seat availability and conditional reservation | DynamoDB transactions in AWS, memory locally |
+| Order | Validate prices, reserve inventory, store order + event | RDS MySQL orders and transactional outbox |
+| Notification | Verify recipients, consume events, send email | SES, SQS long polling, internal Order API |
+| Trip planner | Catalog-grounded AI itinerary and concierge | Cloudflare primary, Gemini fallback, demo fallback |
+| Prometheus | Scrape each pod's metrics | Namespace-scoped discovery, 15-second interval |
+| Grafana | View application health and delivery attempts | Provisioned dashboard, authenticated HTTPS subpath |
+
+Six independently built application images run on EKS Fargate in private subnets.
+Monitoring adds two pods in the existing application namespace. No EC2 node group,
+node-exporter DaemonSet, privileged container or EBS volume is required.
+
+SNS is **not implemented** in the current path. EventBridge routes directly to SQS.
+SNS remains a project acceptance requirement: implement and verify its fanout separately;
+do not present it as deployed. API Gateway, Lambda, Istio, Kinesis and CloudFront are also
+not part of this implementation.
+
+## Request and data flows
+
+1. Route 53 resolves the hostname. The browser connects to the internet-facing ALB.
+   ACM handles TLS at the ALB. HTTP redirects to HTTPS.
+2. The ALB forwards to the Storefront pod through an IP target group. The storefront
+   proxies browser API calls to private Kubernetes Services. Route 53 is DNS, not an HTTP proxy.
+3. Product supplies catalog prices. Product uses Valkey with a 60-second cache lifetime
+   and falls back to its source catalog when the cache fails. Valkey is not inventory storage.
+4. Inventory reads DynamoDB and reserves all requested seats atomically with a sufficient-stock
+   condition. Insufficient seats return a conflict, rather than confirming a sold-out order.
+5. Order recalculates totals using Product data. It commits the order and an outbox event
+   together in MySQL. If persistence fails, it requests an inventory release.
+6. The outbox worker publishes every five seconds to the EventBridge bus. The matching
+   OrderCreated rule forwards the event to SQS.
+7. Notification receives the SQS event, fetches the saved order over the private Order
+   Service, calls SES, then deletes the message only after successful processing.
+8. Failed processing retries after visibility expires. After three receives, SQS moves
+   the message to the dead-letter queue. Duplicate delivery remains possible.
+
+The outbox protects against losing the event between a database commit and publication.
+It does not provide exactly-once delivery or a transaction spanning MySQL and DynamoDB.
+
+[Architecture and sequence diagrams](docs/architecture/README.md) are maintained as Mermaid
+source in Git. The previous Eraser/PNG drawing is historical and is not the current design.
+
+## Directory structure and branch ownership
+
+The protected branches intentionally contain different files:
 
 ```text
-Browser -> Route 53 -> ALB (ACM HTTPS; HTTP redirects to HTTPS)
-        -> EKS Ingress -> retail-storefront Service -> storefront pod
+main
+├── .github/workflows/
+│   ├── bootstrap.yml                 One-time remote-state bootstrap
+│   ├── terraform-ci.yml              Terraform, security and monitoring-chart checks
+│   └── terraform-cd.yml              Manual plan/apply/destroy with approval
+├── terraform/
+│   ├── bootstrap/                    S3 state bucket
+│   ├── environments/{dev,test,prod}/  Separate roots and state keys
+│   └── modules/
+│       ├── platform/                 Composition and application IAM policies
+│       ├── network/                  VPC, subnets, route tables, NAT
+│       ├── eks/                      Fargate cluster and CoreDNS
+│       ├── data/                     DynamoDB, MySQL, Valkey and data SG
+│       ├── messaging/                EventBridge rule/target, SQS and DLQ
+│       ├── edge/                     ACM, SES DKIM, controller IAM, Ingress
+│       ├── ecr/                      Immutable image repositories
+│       ├── secrets/                  Provider secret resources
+│       └── irsa-role/                OIDC trust and workload role policy
+├── deploy/helm/observability/
+│   ├── Chart.yaml / values.yaml
+│   ├── templates/                    Monitoring workloads, discovery RBAC, configuration
+│   └── dashboards/retail.json         Provisioned Grafana dashboard
+├── scripts/
+│   ├── platform-addons.sh             Controllers, monitoring and Ingress lifecycle
+│   └── sync-runtime-secrets.sh        Provider credentials into AWS/Kubernetes Secrets
+└── docs/
+    ├── architecture/README.md         Current topology and sequence diagrams
+    └── observability.md               Dashboard, metrics and deployment verification
+
+app
+├── .github/workflows/{app-ci,app-cd}.yml
+├── services/
+│   ├── product-service/              app.py, metrics.py, Dockerfile, requirements.txt
+│   ├── inventory-service/            app.py, metrics.py, Dockerfile, requirements.txt
+│   ├── order-service/                app.py, metrics.py, Dockerfile, requirements.txt
+│   ├── notification-service/         app.py, metrics.py, Dockerfile, requirements.txt
+│   ├── trip-planner/                 app.py, metrics.py, Dockerfile
+│   └── storefront/                   server.py, metrics.py, index.html, assets/, Dockerfile
+├── deploy/helm/retail/                Application Deployments, Services and IRSA accounts
+├── docker-compose.yml                Local development only
+├── tests/                            Smoke, verification and metrics tests
+└── docs/email-notifications.md        Visitor verification flow and limitations
 ```
 
-The app deployment must create `retail-storefront` on port `80` in `retail-<environment>`.
-ExternalDNS publishes the ALB address for the Ingress hostname. The domain must use the
-nameservers of the existing public Route 53 hosted zone.
-
-EventBridge rules/targets, queue consumers, and SES email delivery are not created yet.
-The architecture diagram is a broader target design; see
-[architecture notes](docs/architecture/README.md) for the current boundary.
-
-Each environment keeps MySQL and Valkey in private subnets and allows access only from
-the EKS cluster security group used by Fargate pods. Fargate runs application pods in
-private subnets; Fargate profiles cover CoreDNS and the two ingress/DNS controllers in
-`kube-system`, plus all workloads in `retail-<environment>`. RDS
-manages its master credential in Secrets Manager; applications should use a restricted
-runtime DB user rather than the master account. Valkey is a cache-aside learning component
-for product reads, never the source of truth for inventory.
-The RDS instance and Serverless cache have ongoing costs while provisioned; destroy an
-environment when it is not needed. DynamoDB uses on-demand billing.
-
-The workflow supports `dev`, `test`, and `prod`, each with an independent state key and
-environment-specific CIDR/domain defaults. These are functional demo stacks, not a
-production-hardened reference architecture. Applying test or prod creates additional
-billable infrastructure; keep those GitHub Environments approval-protected and destroy
-the stacks when finished.
-
-## Repository structure
-
-```text
-terraform/bootstrap/             One-time state bucket
-terraform/environments/          Separate dev, test, and prod state
-terraform/modules/platform/      Composes the platform modules
-terraform/modules/               Network, EKS, data, messaging, ECR, secrets, edge, IRSA
-scripts/                         Post-apply controllers and runtime-secret sync
-.github/workflows/               Manual Terraform and state-bootstrap workflows
-```
-
-Each environment's `main.tf` calls only `modules/platform`. The platform module owns the
-shared service catalog and composes the reusable infrastructure modules.
+Each service retains an independent Docker build context. The small metrics collector
+is copied into each service so no backend depends on another backend's source folder.
+Tests ensure those copies match. There is no shared runtime service.
 
 ## GitHub configuration
 
-Set these repository variables:
+Repository variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `AWS_REGION` | Deployment region; use the same region for EKS and ACM |
-| `AWS_ROLE_ARN` | GitHub Actions OIDC role ARN |
-| `OWNER` | Resource-name prefix component, currently `zein` |
-| `PROJECT_NAME` | Resource-name prefix component, currently `cloudbatch818` |
-| `TF_STATE_BUCKET` | S3 bucket created by the bootstrap workflow |
-| `ROUTE53_ZONE_ID` | Existing public hosted zone ID shared by the environments |
+| AWS_REGION | Resource deployment region, currently us-east-2 |
+| AWS_ACCOUNT_ID | ECR account used by App CD |
+| AWS_ROLE_ARN | GitHub Actions OIDC deployment role |
+| PROJECT_NAME / OWNER | Naming components: cloudbatch818 / zein |
+| TF_STATE_BUCKET | Existing bootstrap state bucket |
+| ROUTE53_ZONE_ID | Existing public hosted zone |
 
-The workflow derives the environment from the selected input. CIDRs and domains are set
-in each Terraform root: dev uses
-`10.40.0.0/16` and `cloudbatch818.click`, test uses `10.50.0.0/16` and
-`test.cloudbatch818.click`, and prod uses `10.60.0.0/16` and
-`prod.cloudbatch818.click`. All three hostnames must exist within the selected public
-Route 53 hosted zone. NAT gateways are enabled by default in every environment.
-Each Terraform root pins its EKS Kubernetes version; update the environment's
-`cluster_version` default when upgrading the cluster.
+Protected GitHub Environments: dev, test, prod. Configure approval rules before apply/destroy.
+Infrastructure supports all three. Application CD currently deploys **dev only**.
+Creating test/prod infrastructure creates separate billable stacks.
 
-Do not create a second hosted zone. Confirm the domain registration delegates to the
-existing zone's Route 53 name servers. The configured hostname must be inside that zone.
+Secrets for each environment you apply:
 
-Create GitHub Environments named `dev`, `test`, and `prod`; configure required reviewers
-for each before using `apply` or `destroy`. Add the following secrets to every environment
-you intend to apply:
-
-| Secret | Used by |
+| Secret | Purpose |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | Trip-planner AI provider |
-| `CLOUDFLARE_ACCOUNT_ID` | Trip-planner AI provider configuration |
-| `GEMINI_API_KEY` | Trip-planner fallback provider |
+| CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN | Trip-planner primary provider |
+| GEMINI_API_KEY | Trip-planner fallback provider |
+| GRAFANA_ADMIN_PASSWORD | At least 16 characters, initial Grafana admin login |
 
-These are seeded into Secrets Manager on `apply`, then synced to Kubernetes. Secret values
-do not enter Terraform variables or state. Add future credentials to the `managed_secrets`
-map in `terraform/modules/platform/main.tf` and extend the owning service's sync/deployment
-integration. Use IAM workload identity for AWS access; do not create AWS access keys.
+Grafana username is `admin`. The workflow creates the `grafana-admin` Kubernetes Secret
+only when absent. Changing the GitHub secret does not rotate an existing Grafana user
+password. Rotate the user through Grafana's authenticated administration UI, and keep the
+bootstrap secret consistent. No password enters Terraform state or Helm values.
 
-Current mapping:
+Provider credentials enter Secrets Manager and namespace-scoped Kubernetes Secrets.
+The External Secrets IAM role exists, but the External Secrets controller is not installed.
+The current workflow performs the sync. No AWS access keys belong in application images.
 
-```text
-<project>-<owner>-<environment>/services/trip-planner/cloudflare -> cloudflare-ai-credentials
-<project>-<owner>-<environment>/services/trip-planner/gemini     -> gemini-ai-credentials
+## Merge and deploy this change
+
+1. Merge the infrastructure review branch into main after checks pass.
+2. Add GRAFANA_ADMIN_PASSWORD under Settings / Environments / dev / Environment secrets.
+3. Run Terraform CD from main with environment=dev and action=plan. Review the change.
+   The SES permission must cover account/region recipient identities while restricting
+   ses:FromAddress to orders@cloudbatch818.click. No region or data-resource migration is intended.
+4. Run Terraform CD with action=apply and approve the protected environment after reviewing
+   its newly generated saved plan. It applies IAM, then installs monitoring and updates Ingress.
+5. Merge the application review branch into app after CI passes. App CD builds immutable
+   commit-tagged images and waits for dev approval before deploying.
+6. Open https://cloudbatch818.click/grafana/ and log in. Choose Orbital Expeditions Operations.
+   Expect six retail scrape targets. A metric rate needs a few scrapes before showing data.
+7. Browse the catalog and place one reservation with a verified recipient. Confirm the
+   order, the inbox email, and dashboard counters. SES acceptance is not proof of inbox delivery.
+8. Once the Terraform permission has applied successfully, the manually added SendOrderEmails
+   inline policy can be removed by an authorized administrator. Keep it until the managed
+   policy is verified; it is not automatically adopted or removed by Terraform.
+
+No AWS apply, order creation, email send or DLQ redrive occurs simply by opening a PR.
+Monitoring-only infrastructure changes do not rebuild app images; app metrics require App CD.
+
+## CI/CD and safety
+
+Infrastructure PRs target main. Terraform CI checks format, offline validation and security.
+It also lints/renders the monitoring chart and checks Prometheus configuration with promtool.
+Terraform CD is manual. plan changes nothing. apply/destroy pause for environment approval.
+
+Application PRs target app. App CI validates Compose/Helm, runs unit and integration tests,
+and checks Trivy, CodeQL and dependencies. App CD publishes SHA-tagged ECR images, reads
+applied Terraform outputs from main, deploys Helm and verifies the rollout.
+App CI and CD are separate workflows; require App CI checks before merging.
+
+Temporary notification-debug workflows/scripts and automatic log dumps have been removed.
+Routine access, probe and successful-email logs are suppressed. Failure/retry logs remain
+so an operator can investigate failures. Prometheus/Grafana are metrics, not a log archive.
+
+Terraform apply is not transactional. Preserve failed-apply state and reconcile resources;
+do not restore an old state file as a substitute for deleting resources.
+If a saved plan is stale, generate/review a fresh plan. Serialize operations on the same state.
+
+The versioned S3 backend uses environment keys and lockfiles. Backend location can differ
+from resource location. Never switch a deployment region against existing state without a
+documented reconciliation/migration plan.
+
+## Networking and permissions
+
+Fargate pods use private subnet IPs. Internal Service DNS and CoreDNS connect the services.
+The data security group permits MySQL TCP 3306 and Valkey TCP 6379 from the EKS cluster
+security group. Security groups are stateful, so replies to permitted connections do not
+require a mirrored inbound rule. Egress, route tables and NAT still determine outbound reachability.
+
+The ALB uses public subnets; RDS/Valkey are private. Private pods reach external AI services
+and AWS APIs through the configured egress path. TLS terminates at ALB; application traffic
+inside the VPC uses HTTP. Kubernetes NetworkPolicies are not installed/enforced by this project.
+
+IRSA binds inventory, order, notification and controllers to specific namespace/service-account
+subjects. Fargate pod execution roles pull images; they do not grant application AWS access.
+The GitHub Terraform deployment role is managed outside this repository and has separate
+permissions from the notification runtime role.
+
+## Email behavior
+
+Recipients enter their own email, request SES verification, confirm the SES link and check
+status before reserving. Order validates that session before reserving inventory.
+No fixed demo recipient replaces the customer's address.
+
+SES remains in sandbox until AWS grants production access. Verified sender and recipient
+identities are required in sandbox; verification does not remove send-rate/daily quotas.
+Demo session tokens and verification rate limits live in one notification process. Keep one
+replica until shared durable session/rate-limit storage exists. Verification is not user login.
+
+SQS has a 60-second visibility timeout and a three-receive DLQ policy. After fixing a failure,
+inspect DLQ messages and use an authorized SQS redrive deliberately. Do not purge the queue.
+At-least-once processing can duplicate email if a send succeeds but acknowledgement fails.
+
+## Local development and validation
+
+On app, Compose uses in-memory orders/inventory and does not prove AWS integration:
+
+```powershell
+docker compose up --build --detach
+pwsh -File tests/smoke.ps1
+python -m unittest discover -s tests -p 'test_*.py'
+docker compose down
 ```
 
-The External Secrets IAM role is provisioned, but the External Secrets controller is not
-installed yet; the Terraform workflow performs the current Kubernetes Secret sync.
+Storefront: http://localhost:8085. Product/Inventory/Order/Notification/Planner local ports:
+8081/8082/8083/8084/8086. In Kubernetes all app containers listen on 8080; Services map
+their published ports to that container port. Compose is never the cloud deployment mechanism.
 
-The scripts are workflow glue, not application services:
-
-- `platform-addons.sh` configures `kubectl`, installs the AWS Load Balancer Controller and
-  ExternalDNS, then applies the storefront Ingress. On destroy, it removes the Ingress and
-  controllers first so the ALB and DNS cleanup can finish before Terraform removes the VPC.
-- `sync-runtime-secrets.sh` validates GitHub credentials, writes them to the existing
-  Secrets Manager entries without passing values through Terraform, then syncs Kubernetes
-  Secrets for the trip-planner deployment.
-
-## Resource naming and tags
-
-Resource names use `cloudbatch818-zein-<environment>` as their base (some grouped names
-continue with `/services/...`). AWS resources receive `Owner=zein`, `Project=Cloudbatch818`,
-`Environment=<environment>`, and `ManagedBy=terraform`; these values are applied through
-provider defaults and passed into modules that create child resources. The Ingress also
-tags its AWS load balancer. Keep GitHub repository variables `OWNER=zein` and
-`PROJECT_NAME=cloudbatch818` so names remain consistent. Route 53 record sets and inline IAM
-policies do not support resource tags; their owning zone/role is the taggable AWS resource.
-
-The app branch also needs `AWS_ACCOUNT_ID`, `CLOUDFLARE_K8S_SECRET_NAME`, and
-`GEMINI_K8S_SECRET_NAME` as GitHub Environment variables for its image and Helm deploy jobs.
-
-## CI and CD flow
-
-The infrastructure workflows live on the infrastructure branch; they do not build or
-deploy application images.
-
-- **Infra CI:** pull requests targeting `main` run Terraform format/validate plus Trivy
-  Terraform misconfiguration and secret scans. A merge to `main` triggers the same checks.
-- **Infra CD:** only `workflow_dispatch` runs it, and only from `main`. Choose `dev`, `test`,
-  or `prod`. `plan` creates a review artifact without applying. `apply` and `destroy`
-  create the corresponding saved plan, publish it for review, then pause at the selected
-  protected GitHub Environment before applying that exact plan. Plan artifacts contain
-  Terraform plan data and are retained for one day; restrict repository artifact access.
-- **Bootstrap:** also manual and main-only. It creates the state bucket and applies its
-  own plan in that run; run it once before infrastructure CD.
-
-The plan job runs without a GitHub Environment so it can finish before the approval gate.
-Put shared deployment configuration in repository variables as listed above. Configure
-the AWS OIDC role trust to allow the `main` branch subject for plans and the `dev`, `test`,
-and `prod` Environment subjects for applies. Keep AWS permissions as narrow as possible.
-The deployment role must also be allowed to create the EKS Fargate service-linked role;
-include `eks-fargate.amazonaws.com` in the `iam:AWSServiceName` condition for
-`iam:CreateServiceLinkedRole`. Its `iam:PassRole` condition for `eks.amazonaws.com`
-covers passing the Fargate pod execution roles to EKS.
-
-The application workflows are separate on the `app` branch:
-
-- **App CI/CD:** pull requests targeting `app` run Compose/Helm validation, smoke tests,
-  CodeQL, Trivy source/image scans, and dependency review; they do not publish or deploy.
-  A merge creates a push to `app`, which reruns the checks. On success, the same workflow
-  publishes immutable SHA-tagged images, pauses at the protected `dev` Environment for
-  approval, then deploys that commit. This is automatic after merge, with a manual approval
-  gate; no Actions-tab manual dispatch is required. GitHub requires `workflow_dispatch` and
-  `workflow_run` definitions to exist on the repository's default branch, so the app flow
-  stays in one push-triggered workflow on `app` instead of chaining a second workflow.
-
-Require CI/security checks in branch protection for `main` and `app`, and disallow direct
-pushes. Branch separation organizes workflows but does not isolate repository secrets; use
-separate repositories and OIDC roles if you need a hard security boundary.
-
-## First deployment
-
-1. Configure the GitHub OIDC role and repository variables.
-2. Run **Bootstrap Terraform State** once; copy its bucket output to `TF_STATE_BUCKET`.
-3. Configure environment variables and secrets above.
-4. From `main`, run **Terraform Infrastructure** with `environment=dev`, `action=plan`; review
-   the artifact, especially the billable RDS and ElastiCache resources.
-5. Run it again with `action=apply`; after reviewing the saved-plan artifact, approve the
-   `dev` Environment gate to apply that same plan.
-6. Merge the application PR into `app`. After CI passes, approve the `dev` Environment
-   deployment. DNS and ALB health become ready after the Ingress, storefront Service,
-   certificate validation, and controller reconciliation complete.
-
-The state bucket has versioning, encryption, and public-access blocks. Environment states
-are isolated at `environments/<environment>/terraform.tfstate` and use S3 lockfiles.
-
-## Workflow actions
-
-- `plan`: format check, validate, and show a plan; makes no infrastructure changes.
-- `apply`: apply the reviewed Terraform plan, install cluster add-ons, configure HTTPS
-  ingress, and sync runtime credentials.
-- `destroy`: plan destruction, remove the Ingress/controllers, then apply the destroy plan.
-
-Useful local checks (no AWS apply):
+On main:
 
 ```powershell
 terraform fmt -check -recursive terraform
 terraform -chdir=terraform/environments/dev init -backend=false
 terraform -chdir=terraform/environments/dev validate
+helm lint deploy/helm/observability
+helm template monitoring deploy/helm/observability --namespace retail-dev
 ```
 
-Terraform state and plan files are ignored by Git. Never commit `.tfstate`, `.tfplan`,
-`.tfvars`, or `.env` files.
+Do not commit credentials, .env, state, plans or real customer records.
+
+## Cost and production boundary
+
+No validated monthly bill, load benchmark, SLA or ROI is claimed. Use AWS billing data and a
+workload model before quoting figures. Always-on costs include EKS control plane, NAT, ALB,
+RDS and the cache. Fargate bills provisioned pod capacity; managed services add usage charges.
+Monitoring adds two continuously running pods. Application data and metrics have different lifecycles.
+
+RDS is single-AZ db.t3.micro with one-day backups. Deletion protection is disabled and destroy
+skips the final snapshot: preserve orders with an explicit backup before any destructive run.
+Prometheus and Grafana use emptyDir storage. Metrics history and Grafana UI changes/users reset
+with replacement pods; source-controlled dashboard/data-source provisioning recreates the baseline.
+
+Before production: shared verification sessions/rate limits, notification idempotency,
+reliable compensation, restricted DB user, longer backups/restore drills, multi-AZ design,
+SSO and stronger admin perimeter, durable monitoring, alert routing, queue/DLQ alarms,
+secret rotation, abuse protection and least-privilege review of the deployment role.
+SNS fanout remains an outstanding project acceptance item.
+
+Before presenting: finish the two deployments, verify six scrape targets, confirm spare
+inventory and one email, prepare a recorded/screenshot fallback and rehearse the
+ten-minute presentation. Keep slide decks, presenter notes and private demo evidence
+outside this repository.
