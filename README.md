@@ -56,7 +56,7 @@ The outbox protects against losing the event between a database commit and publi
 It does not provide exactly-once delivery or a transaction spanning MySQL and DynamoDB.
 
 [Architecture and sequence diagrams](docs/architecture/README.md) are maintained as Mermaid
-source in Git. The previous Eraser/PNG drawing is historical and is not the current design.
+source in Git.
 
 ## Directory structure and branch ownership
 

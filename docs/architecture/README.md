@@ -1,8 +1,7 @@
 # Current architecture
 
 These diagrams describe the implemented paths plus the monitoring included in this PR.
-Monitoring requires deployment. Historical Eraser/PNG assets are retained for reference
-but are not authoritative. Edit this Mermaid source with the code changes.
+Monitoring requires deployment. Edit this Mermaid source with the code changes.
 
 ## Runtime topology
 
