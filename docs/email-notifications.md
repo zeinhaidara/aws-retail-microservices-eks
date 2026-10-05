@@ -12,6 +12,11 @@ before inventory is reserved, not just in the browser. No fixed demo recipient
 is used for website orders.
 
 Deploy the Terraform notification-role permissions before the application CD.
+The runtime notification role must permit SES sending against both sender and
+verified recipient identities in the account/region. Terraform scopes those
+identities with a sender-address condition; changing only the GitHub deployment
+role does not grant the running worker permission. After the managed policy is
+applied and tested, an equivalent temporary console-added policy can be removed.
 The SES sender/domain must be verified and account sending enabled. Verification
 does not remove SES sandbox sending quotas or request production access.
 

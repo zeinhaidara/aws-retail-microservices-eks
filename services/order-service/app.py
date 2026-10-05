@@ -5,7 +5,8 @@ import time
 import uuid
 from decimal import Decimal
 from functools import lru_cache
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
+from metrics import MetricsHandler, event
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -178,6 +179,7 @@ def publish_pending_events():
         }])
         if response.get("FailedEntryCount", 0):
             raise RuntimeError("EventBridge rejected an order event")
+        event("outbox_published")
         connection = database_connection()
         try:
             with connection.cursor() as cursor:
@@ -192,11 +194,12 @@ def outbox_worker():
         try:
             publish_pending_events()
         except Exception as error:
+            event("outbox_failed")
             print(f"Order outbox delivery failed; it will retry: {error}")
         time.sleep(5)
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(MetricsHandler):
     def _write(self, status, body):
         payload = json.dumps(body).encode("utf-8")
         self.send_response(status)
@@ -302,10 +305,9 @@ class Handler(BaseHTTPRequestHandler):
                 print(f"Inventory compensation failed for {order['orderId']}: {release_error}")
             print(f"Order persistence failed: {error}")
             return self._write(503, {"error": "order could not be saved; inventory release requested"})
+        event("orders_confirmed")
         return self._write(201, order)
 
-    def log_message(self, fmt, *args):
-        print(f"[{SERVICE}] {fmt % args}")
 
 
 def main():

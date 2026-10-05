@@ -4,7 +4,8 @@ import secrets
 import threading
 import time
 from functools import lru_cache
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
+from metrics import MetricsHandler, event
 from urllib.request import urlopen
 
 
@@ -102,7 +103,6 @@ def order_details(order_id):
 def send_confirmation(order):
     recipient = order.get("email")
     if not recipient:
-        print(f"Order confirmation ready for {order['orderId']}; email sender or recipient is not configured")
         return
     if not SES_FROM_ADDRESS:
         raise RuntimeError("Email sender is not configured")
@@ -124,7 +124,7 @@ def send_confirmation(order):
             "Body": {"Text": {"Data": body, "Charset": "UTF-8"}},
         }},
     )
-    print(f"Sent order confirmation for {order['orderId']} to {recipient}")
+    event("email_sent")
 
 
 def process_message(message):
@@ -151,13 +151,14 @@ def consume_events():
                     process_message(message)
                     client.delete_message(QueueUrl=ORDER_EVENTS_QUEUE_URL, ReceiptHandle=message["ReceiptHandle"])
                 except Exception as error:
+                    event("email_failed")
                     print(f"Order event failed; SQS will retry it: {error}")
         except Exception as error:
             print(f"Order event polling failed; retrying: {error}")
             time.sleep(5)
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(MetricsHandler):
     def _write(self, status, body):
         payload = json.dumps(body).encode()
         self.send_response(status)
@@ -200,8 +201,6 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_error(404)
 
-    def log_message(self, fmt, *args):
-        print(f"[{SERVICE}] {fmt % args}")
 
 
 def main():

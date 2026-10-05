@@ -1,7 +1,8 @@
 import json
 import os
 import socket
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
+from metrics import MetricsHandler
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -238,7 +239,7 @@ def answer_chat(body):
     return {"reply": reply.strip(), "mode": "ai"}
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(MetricsHandler):
     def respond(self, status, body):
         payload = json.dumps(body).encode()
         self.send_response(status)
@@ -268,8 +269,6 @@ class Handler(BaseHTTPRequestHandler):
             print(f"[trip-planner] request failed: {type(error).__name__}")
             return self.respond(502, {"error": "Trip planning is temporarily unavailable."})
 
-    def log_message(self, fmt, *args):
-        print(f"[trip-planner] {fmt % args}")
 
 
 if __name__ == "__main__":

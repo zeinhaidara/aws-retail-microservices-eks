@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import sys
 import unittest
 import json
 import threading
@@ -10,6 +11,7 @@ from unittest.mock import Mock, patch
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "services/notification-service"))
 spec = importlib.util.spec_from_file_location("notification", ROOT / "services/notification-service/app.py")
 notification = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(notification)
