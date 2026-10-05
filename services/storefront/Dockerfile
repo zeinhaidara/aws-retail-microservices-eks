@@ -7,7 +7,7 @@ RUN apt-get update \
     && apt-get upgrade --yes \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --chown=65534:65534 server.py index.html ./
+COPY --chown=65534:65534 server.py metrics.py index.html ./
 COPY --chown=65534:65534 assets ./assets
 
 USER 65534:65534

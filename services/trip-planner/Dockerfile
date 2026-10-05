@@ -7,7 +7,7 @@ RUN apt-get update \
     && apt-get upgrade --yes \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --chown=65534:65534 app.py ./
+COPY --chown=65534:65534 app.py metrics.py ./
 USER 65534:65534
 EXPOSE 8080
 CMD ["python", "app.py"]

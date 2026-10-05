@@ -1,7 +1,6 @@
 name: Application CD
 
 on:
-  workflow_dispatch:
   push:
     branches: [app]
     paths:
@@ -12,7 +11,6 @@ on:
       - ".env.example"
       - ".github/workflows/app-ci.yml"
       - ".github/workflows/app-cd.yml"
-      - "scripts/notification-diagnostics.sh"
 
 permissions:
   contents: read
@@ -23,26 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  notification-diagnostics:
-    name: Notification diagnostics (no deployment)
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    environment: dev
-    steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - name: Configure kubectl
-        env:
-          CLUSTER_NAME: ${{ vars.PROJECT_NAME }}-${{ vars.OWNER }}-dev
-        run: aws eks update-kubeconfig --name "$CLUSTER_NAME"
-      - name: Read notification logs and SES status
-        run: bash scripts/notification-diagnostics.sh
-
   validate:
-    if: github.event_name == 'push'
     name: "Stage 1 — Release chart preflight"
     runs-on: ubuntu-latest
     steps:
@@ -53,8 +32,6 @@ jobs:
       - name: Lint Helm chart
         run: helm lint deploy/helm/retail
 
-      - name: Validate diagnostic script
-        run: bash -n scripts/notification-diagnostics.sh
 
   publish:
     name: "Stage 2 — Build and publish ${{ matrix.service }}"
@@ -183,8 +160,3 @@ jobs:
 
       - name: Verify dev rollout
         run: kubectl rollout status deployment -l app.kubernetes.io/part-of=retail --namespace retail-dev --timeout=10m
-
-      - name: Read notification logs and SES status
-        if: always() && steps.infra.outcome == 'success'
-        continue-on-error: true
-        run: bash scripts/notification-diagnostics.sh

@@ -1,6 +1,7 @@
 import json
 import os
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
+from metrics import MetricsHandler
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -21,7 +22,7 @@ def json_request(url, method="GET", body=None):
         return response.status, json.loads(response.read() or b"{}")
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(MetricsHandler):
     def _respond(self, status, body, content_type="application/json"):
         payload = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
         self.send_response(status)
@@ -92,8 +93,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._proxy(NOTIFICATION_SERVICE_URL, path.removeprefix("/api"), method="POST", body=body)
         return self._proxy(TRIP_PLANNER_URL, "/chat" if path == "/api/chat" else "/trip-plan", method="POST", body=body)
 
-    def log_message(self, fmt, *args):
-        print(f"[storefront] {fmt % args}")
 
 
 if __name__ == "__main__":
