@@ -2,9 +2,9 @@ name: Terraform CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, chore/integrate-app-20261111]
   push:
-    branches: [main]
+    branches: [main, chore/integrate-app-20261111]
 
 permissions:
   contents: read
@@ -26,9 +26,9 @@ jobs:
           - terraform/environments/test
           - terraform/environments/prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
 
       - name: Check formatting
         run: terraform fmt -check -recursive terraform
@@ -45,10 +45,10 @@ jobs:
     name: Scan Terraform configuration
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Scan Terraform misconfigurations
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
           scan-ref: terraform
@@ -56,7 +56,7 @@ jobs:
           exit-code: "1"
 
       - name: Scan repository for secrets
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -68,8 +68,8 @@ jobs:
     name: Validate Fargate monitoring chart
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
       - name: Validate chart and scripts
         run: |
           helm lint deploy/helm/observability
