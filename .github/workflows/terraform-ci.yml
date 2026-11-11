@@ -2,9 +2,9 @@ name: Terraform CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, chore/integrate-app-20261111]
   push:
-    branches: [main]
+    branches: [main, chore/integrate-app-20261111]
 
 permissions:
   contents: read
