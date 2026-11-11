@@ -4,7 +4,9 @@ A working, fictional space-travel storefront that demonstrates an AWS applicatio
 customer request through inventory reservation, durable order storage and email delivery.
 The business scenario is a demo. Package prices are fictional, not revenue or real bookings.
 
-Development deployment: **https://cloudbatch818.click** in **us-east-2**.
+**Status: dev cloud environment torn down.** The former demo URL is offline.
+
+**Validation level: run on real cloud (dev).** Storefront, reservations and SES confirmation were demonstrated in us-east-2. Current PR CI uses local fixtures; monitoring deployment remains unverified.
 Terraform's S3 backend remains in **us-east-1**. Those regions serve different purposes.
 
 ## What works and what still needs deployment
@@ -35,6 +37,20 @@ not part of this implementation.
 
 ## Request and data flows
 
+```mermaid
+flowchart LR
+    Browser --> ALB --> Storefront
+    Storefront --> Product
+    Storefront --> Order
+    Order --> Inventory --> DynamoDB
+    Order --> MySQL[MySQL orders and outbox]
+    MySQL --> Publisher --> EventBridge --> SQS --> Notification --> SES
+    SQS --> DLQ
+    Product --> Valkey
+    Storefront --> Planner[Trip planner]
+    Prometheus --> Grafana
+```
+
 1. Route 53 resolves the hostname. The browser connects to the internet-facing ALB.
    ACM handles TLS at the ALB. HTTP redirects to HTTPS.
 2. The ALB forwards to the Storefront pod through an IP target group. The storefront
@@ -60,7 +76,7 @@ source in Git.
 
 ## Directory structure and branch ownership
 
-The protected branches intentionally contain different files:
+The default branch contains both infrastructure and application code. The historical `app` branch is retained; new application PRs can target `main`.
 
 ```text
 main
@@ -92,7 +108,7 @@ main
     ├── architecture/README.md         Current topology and sequence diagrams
     └── observability.md               Dashboard, metrics and deployment verification
 
-app
+Application directories on main
 ├── .github/workflows/{app-ci,app-cd}.yml
 ├── services/
 │   ├── product-service/              app.py, metrics.py, Dockerfile, requirements.txt
@@ -145,27 +161,9 @@ Provider credentials enter Secrets Manager and namespace-scoped Kubernetes Secre
 The External Secrets IAM role exists, but the External Secrets controller is not installed.
 The current workflow performs the sync. No AWS access keys belong in application images.
 
-## Merge and deploy this change
+## Deployment status
 
-1. Merge the infrastructure review branch into main after checks pass.
-2. Add GRAFANA_ADMIN_PASSWORD under Settings / Environments / dev / Environment secrets.
-3. Run Terraform CD from main with environment=dev and action=plan. Review the change.
-   The SES permission must cover account/region recipient identities while restricting
-   ses:FromAddress to orders@cloudbatch818.click. No region or data-resource migration is intended.
-4. Run Terraform CD with action=apply and approve the protected environment after reviewing
-   its newly generated saved plan. It applies IAM, then installs monitoring and updates Ingress.
-5. Merge the application review branch into app after CI passes. App CD builds immutable
-   commit-tagged images and waits for dev approval before deploying.
-6. Open https://cloudbatch818.click/grafana/ and log in. Choose Orbital Expeditions Operations.
-   Expect six retail scrape targets. A metric rate needs a few scrapes before showing data.
-7. Browse the catalog and place one reservation with a verified recipient. Confirm the
-   order, the inbox email, and dashboard counters. SES acceptance is not proof of inbox delivery.
-8. Once the Terraform permission has applied successfully, the manually added SendOrderEmails
-   inline policy can be removed by an authorized administrator. Keep it until the managed
-   policy is verified; it is not automatically adopted or removed by Terraform.
-
-No AWS apply, order creation, email send or DLQ redrive occurs simply by opening a PR.
-Monitoring-only infrastructure changes do not rebuild app images; app metrics require App CD.
+Deployment is an explicit manual operation after review. Terraform CD, state bootstrap and App CD use `workflow_dispatch`; merging this integration does not deploy or publish images. The retained monitoring configuration has not been verified on a rebuilt stack.
 
 ## CI/CD and safety
 
@@ -173,8 +171,8 @@ Infrastructure PRs target main. Terraform CI checks format, offline validation a
 It also lints/renders the monitoring chart and checks Prometheus configuration with promtool.
 Terraform CD is manual. plan changes nothing. apply/destroy pause for environment approval.
 
-Application PRs target app. App CI validates Compose/Helm, runs unit and integration tests,
-and checks Trivy, CodeQL and dependencies. App CD publishes SHA-tagged ECR images, reads
+Application PRs target main (or the retained app branch). App CI validates Compose/Helm, runs unit and integration tests,
+and checks Trivy, CodeQL and dependencies. Manually dispatched App CD on main publishes SHA-tagged ECR images, reads
 applied Terraform outputs from main, deploys Helm and verifies the rollout.
 App CI and CD are separate workflows; require App CI checks before merging.
 
@@ -223,7 +221,7 @@ At-least-once processing can duplicate email if a send succeeds but acknowledgem
 
 ## Local development and validation
 
-On app, Compose uses in-memory orders/inventory and does not prove AWS integration:
+Compose uses in-memory orders/inventory and does not prove AWS integration:
 
 ```powershell
 docker compose up --build --detach
@@ -236,7 +234,7 @@ Storefront: http://localhost:8085. Product/Inventory/Order/Notification/Planner 
 8081/8082/8083/8084/8086. In Kubernetes all app containers listen on 8080; Services map
 their published ports to that container port. Compose is never the cloud deployment mechanism.
 
-On main:
+Infrastructure checks:
 
 ```powershell
 terraform fmt -check -recursive terraform
@@ -266,7 +264,4 @@ SSO and stronger admin perimeter, durable monitoring, alert routing, queue/DLQ a
 secret rotation, abuse protection and least-privilege review of the deployment role.
 SNS fanout remains an outstanding project acceptance item.
 
-Before presenting: finish the two deployments, verify six scrape targets, confirm spare
-inventory and one email, prepare a recorded/screenshot fallback and rehearse the
-ten-minute presentation. Keep slide decks, presenter notes and private demo evidence
-outside this repository.
+Before another demo, rebuild deliberately, verify monitoring and email delivery, and capture fresh evidence.
