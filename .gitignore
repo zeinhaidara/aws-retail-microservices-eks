@@ -9,3 +9,8 @@ crash.log
 .env
 .worktrees/
 /docs/presentation/
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+memory/
